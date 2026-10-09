@@ -299,30 +299,23 @@ Here are some common errors and solutions:
 * **Dependencies aren't up to date:** Regularly update packages using `pip install -r requirements.txt`.
 * **Unable to register users with special characters:** The bot now normalizes usernames by removing accents and symbols before saving them in the database.
 
-## Database migrations
+## Schema ownership and deployment
 
-Before deploying versions that include schema changes, run pending SQL migrations in the target environment first:
+**BraFurries-Database** is the single source of reviewed SQL schema changes for the shared MariaDB database. The Coddy runtime must not manage schema migrations, and a Coddy deploy **does not run SQL migrations**. The old `scripts/run_migrations.py` and `migrations/` tree have been retired; the historical `schema_migrations` table, if present, must not be dropped automatically.
 
-```bash
-.venv/bin/python scripts/run_migrations.py
-```
+The official Database repository stores versioned migrations under `flyway/sql/versioned/`. Flyway baseline/operational adoption in production is a **separate rollout**; do not infer that an existing database has a Flyway schema history. Apply schema changes only through the separately approved Database rollout process, with validated preconditions, and **before** deploying Coddy code that depends on them.
 
-The production wrapper runs pending migrations from the candidate image before changing the active runtime.
+### Production deployment
 
-Production deployment runs automatically for ordinary pushes to `main` after tests, image build, and safety checks. Changes to `migrations/**`, `scripts/run_migrations.py`, runtime schema-authority files (`core/database.py` and `cogs/xp.py`), or the production workflow/gate require an intentional manual run of the `Deploy em Produção` workflow on the current `main` head. Manual dispatch bypasses only path safety: a stale manual run is skipped and must be restarted from current `main`. The restricted production wrapper remains the only component authorized to change Docker or runtime state on the VM.
+Deployment is manual through [`Deploy em Produção (manual)`](.github/workflows/prod-deploy.yaml), using `workflow_dispatch` on the protected `main` branch. The workflow runs tests, builds and publishes an immutable GHCR image, then deploys using the restricted `coddy-production` runner group and the `Produção` environment. It validates both liveness and readiness.
 
-### Required migration for existing environments
+The host-side deploy wrapper must remain configured **without invoking the retired migration runner**. It may stage/promote the configured environment and roll back the previous Docker image if readiness fails; a container rollback cannot undo database schema changes. Never manually run the historical migration SQL from this repository as part of deployment.
 
-If `config_server_settings.trending_presence_enabled` does not exist yet, apply:
+### Legacy runtime schema mutations
 
-```sql
-ALTER TABLE config_server_settings
-ADD COLUMN trending_presence_enabled TINYINT(1) NOT NULL DEFAULT 0;
-```
+Some legacy features still contain DDL in `core/database.py` and `cogs/xp.py`. Their phased retirement, including Database-owned replacements and compatibility checks, is tracked in [issue #3](https://github.com/BraFurries/BraFurries-Discord/issues/3). This cleanup removes only the standalone migration executor and obsolete automatic-deploy gate, **not** those runtime mutations.
 
-### Deploy note
-
-The application now validates this schema requirement during startup. If the migration cannot be applied or validated on boot, the service fails fast with a clear startup error instead of attempting DDL during runtime events.
+If startup reports a missing column or table (for example `config_server_settings.trending_presence_enabled`), inspect the actual schema and coordinate a reviewed Database migration; do not patch the shared production schema through Coddy.
 
 ## Contributing
 
