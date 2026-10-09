@@ -14,7 +14,8 @@ def test_production_workflow_only_runs_from_main_and_supports_manual_deploy():
     assert workflow.count("github.ref == 'refs/heads/main'") >= 2
     assert "github.event_name == 'workflow_dispatch'" in workflow
     assert "vars.CODDY_AUTO_DEPLOY_ENABLED == 'true'" in workflow
-    assert "needs: secret-scan" in workflow
+    assert "  deploy-secret-scan:" in workflow
+    assert "needs: deploy-secret-scan" in workflow
     assert "needs: build-image" in workflow
     assert "Refusing stale deployment: main has advanced." in workflow
     assert "git --log-opts=\"--all\" --redact=100" in workflow
