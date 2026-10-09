@@ -7,7 +7,7 @@ on:
       - main
 
 jobs:
-  secret-scan:
+  deploy-secret-scan:
     if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.CODDY_AUTO_DEPLOY_ENABLED == 'true') }}
     runs-on: ubuntu-latest
 
@@ -29,8 +29,8 @@ jobs:
             git --log-opts="--all" --redact=100
 
   build-image:
-    if: ${{ github.ref == 'refs/heads/main' && needs.secret-scan.result == 'success' }}
-    needs: secret-scan
+    if: ${{ github.ref == 'refs/heads/main' && needs.deploy-secret-scan.result == 'success' }}
+    needs: deploy-secret-scan
     runs-on: ubuntu-latest
 
     permissions:
