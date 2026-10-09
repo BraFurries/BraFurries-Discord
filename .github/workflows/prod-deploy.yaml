@@ -1,11 +1,36 @@
-name: Deploy em Produção (manual)
+name: Deploy em Produção
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
+  deploy-secret-scan:
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.CODDY_AUTO_DEPLOY_ENABLED == 'true') }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout all refs
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Scan Git history and current tree with pinned Gitleaks
+        run: |
+          docker run --rm \
+            --mount type=bind,source="$PWD",target=/repo,readonly \
+            --workdir /repo \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --log-opts="--all" --redact=100
+
   build-image:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && needs.deploy-secret-scan.result == 'success' }}
+    needs: deploy-secret-scan
     runs-on: ubuntu-latest
 
     permissions:
@@ -89,6 +114,27 @@ jobs:
       packages: read
 
     steps:
+      - name: Reject stale main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          CURRENT_SHA="$(
+            curl -fsS \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPOSITORY}/git/ref/heads/main" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])'
+          )"
+
+          if [[ "$CURRENT_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "Refusing stale deployment: main has advanced." >&2
+            exit 1
+          fi
+
       - name: Stage production environment
         env:
           PROD_ENV_FILE: ${{ secrets.PROD_ENV_FILE }}
