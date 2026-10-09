@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BraFurries - Documentação Oficial do Bot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Amaranth:wght@400;700&family=Archivo:wght@400;600&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        braDark: '#262626',
+                        braPurple: '#8a3594',
+                        braCyan: '#45bced',
+                        braYellow: '#febf10',
+                        braMagenta: '#ee4092',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .font-amaranth { font-family: 'Amaranth', sans-serif; }
+        .font-archivo { font-family: 'Archivo', sans-serif; }
+        .bg-pattern { background-image: radial-gradient(#262626 1px, transparent 1px); background-size: 24px 24px; opacity: 0.02; }
+        
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 10px; }
+        .custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #9ca3af; }
+    </style>
+</head>
+<body class="bg-white font-archivo text-gray-800 flex flex-col h-screen overflow-hidden">
+
+    <header class="bg-white/90 backdrop-blur-md border-b border-gray-100 shrink-0 h-20 flex items-center z-50">
+        <div class="max-w-[1600px] mx-auto px-6 w-full flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <span class="text-braDark font-amaranth font-bold text-2xl italic tracking-tighter uppercase">BraFurries</span>
+                <span class="bg-gray-100 text-gray-500 font-bold px-3 py-1 rounded-md text-[10px] uppercase tracking-widest ml-2">Docs v2.0</span>
+            </div>
+            <a href="/dashboard" class="text-sm font-bold text-gray-500 hover:text-braPurple transition bg-gray-50 px-4 py-2 rounded-xl">Voltar ao Painel</a>
+        </div>
+    </header>
+
+    <div class="flex flex-1 max-w-[1600px] mx-auto w-full relative overflow-hidden">
+        
+        <aside class="w-72 hidden lg:flex flex-col shrink-0 border-r border-gray-100 bg-gray-50 z-20">
+            <div class="p-6">
+                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4">Navegação Rápida</p>
+                <nav class="space-y-1 font-semibold text-sm text-gray-600 custom-scrollbar overflow-y-auto max-h-[calc(100vh-12rem)] pr-2">
+                    <a href="#ajuda" class="block px-3 py-2 rounded-lg hover:bg-braCyan/10 hover:text-braCyan transition">Ajuda</a>
+                    <a href="#registro" class="block px-3 py-2 rounded-lg hover:bg-braCyan/10 hover:text-braCyan transition">Registro e Informações</a>
+                    <a href="#eventos" class="block px-3 py-2 rounded-lg hover:bg-braCyan/10 hover:text-braCyan transition">Eventos</a>
+                    <a href="#xp" class="block px-3 py-2 rounded-lg hover:bg-braCyan/10 hover:text-braCyan transition">XP e Roleplay</a>
+                    <a href="#economia" class="block px-3 py-2 rounded-lg hover:bg-braCyan/10 hover:text-braCyan transition">Economia</a>
+                    <a href="#play" class="block px-3 py-2 rounded-lg hover:bg-braCyan/10 hover:text-braCyan transition">Play e Coop</a>
+                    <a href="#vip" class="block px-3 py-2 rounded-lg hover:bg-braCyan/10 hover:text-braCyan transition">VIP</a>
+                    
+                    <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-6 mb-2 pt-4 border-t border-gray-200">Administração</p>
+                    <a href="#moderacao" class="block px-3 py-2 rounded-lg hover:bg-braMagenta/10 hover:text-braMagenta transition">Moderação</a>
+                    <a href="#seguranca" class="block px-3 py-2 rounded-lg hover:bg-braMagenta/10 hover:text-braMagenta transition">Segurança</a>
+                    <a href="#utilitarios" class="block px-3 py-2 rounded-lg hover:bg-braMagenta/10 hover:text-braMagenta transition">Utilitários</a>
+                    <a href="#relatorios" class="block px-3 py-2 rounded-lg hover:bg-braMagenta/10 hover:text-braMagenta transition">Relatórios</a>
+                    <a href="#formularios" class="block px-3 py-2 rounded-lg hover:bg-braMagenta/10 hover:text-braMagenta transition">Formulários</a>
+                    <a href="#backup" class="block px-3 py-2 rounded-lg hover:bg-braYellow/10 hover:text-braDark transition">Backup e Migração</a>
+                    <a href="#admin" class="block px-3 py-2 rounded-lg hover:bg-braYellow/10 hover:text-braDark transition">Admin Geral</a>
+                </nav>
+            </div>
+        </aside>
+
+        <main class="flex-1 overflow-y-auto custom-scrollbar relative p-8 lg:p-12 scroll-smooth">
+            <div class="absolute inset-0 bg-pattern pointer-events-none z-0"></div>
+            
+            <div class="max-w-5xl relative z-10 space-y-16 pb-20">
+                
+                <section class="border-b border-gray-200 pb-10">
+                    <span class="bg-braPurple/10 text-braPurple text-xs font-bold px-4 py-2 rounded-full uppercase tracking-widest inline-block mb-6">Guia de Comandos</span>
+                    <h1 class="text-4xl md:text-5xl font-amaranth font-bold text-braDark italic mb-4">Documentação do Coddy</h1>
+                    
+                    <div class="flex items-center gap-2 mb-8">
+                        <span class="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Última atualização:</span>
+                        <span class="text-sm font-bold text-braDark bg-gray-100 px-2 py-1 rounded">14 de Maio de 2026</span>
+                    </div>
+
+                    <p class="text-lg text-gray-600 font-medium leading-relaxed mb-6">
+                        Este é o catálogo completo e revisado de todos os comandos do projeto. A notação de grupos (ex: <code class="bg-gray-100 px-1 rounded">/admin configuracoes</code>) significa que o comando principal tem subcomandos.
+                    </p>
+
+                    <div class="bg-white p-6 rounded-[2rem] border border-gray-200 shadow-sm mb-6">
+                        <h3 class="font-amaranth font-bold text-braDark mb-4 text-lg">Legenda de Permissões</h3>
+                        <div class="flex flex-wrap gap-6">
+                            <div class="flex items-center gap-3">
+                                <span class="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-1 rounded uppercase">Membro</span>
+                                <p class="text-xs font-medium text-gray-600">Acesso público / geral.</p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <span class="bg-braMagenta text-white text-[10px] font-bold px-2 py-1 rounded uppercase">Staff</span>
+                                <p class="text-xs font-medium text-gray-600">Requer cargo mapeado em <code class="bg-gray-100 px-1 rounded">/admin cargos setar</code>.</p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <span class="bg-braYellow text-braDark text-[10px] font-bold px-2 py-1 rounded uppercase">Admin</span>
+                                <p class="text-xs font-medium text-gray-600">Acesso restrito à administração global.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-braYellow/10 border-l-4 border-braYellow p-5 rounded-r-xl">
+                        <p class="text-sm font-semibold text-gray-700">
+                            💡 Lembre-se: O bot funciona exclusivamente via <strong class="text-braDark">Slash Commands</strong>. Digite <code>/</code> no chat do Discord para visualizar os parâmetros obrigatórios e opcionais diretamente na interface.
+                        </p>
+                    </div>
+                    <div class="bg-braMagenta/10 border-l-4 border-braMagenta p-5 rounded-r-xl">
+                        <p class="text-sm font-semibold text-gray-800">
+                            ⚠️ <strong class="font-bold text-braMagenta">Atenção Estrutural:</strong> 
+                            Para que os comandos de Staff e Moderação funcionem, é obrigatório que o administrador do servidor adicione e mapeie os cargos de staff via comando <code>/admin cargos setar</code>. Sem este mapeamento, o bot negará a execução.
+                        </p>
+                    </div>
+                </section>
+
+                <section id="ajuda" class="scroll-mt-24">
+                    <h2 class="text-2xl font-amaranth font-bold text-braPurple mb-6 flex items-center gap-2 border-b border-gray-100 pb-2"><span>❓</span> Ajuda</h2>
+                    <div class="bg-white rounded-[2rem] shadow-sm border border-gray-100 divide-y divide-gray-50">
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50 transition">
+                            <div class="w-full md:w-56 shrink-0"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/ajuda</code></div>
+                            <div class="flex-1"><p class="text-sm text-gray-600 font-medium">Mostra a ajuda geral do bot para membros, com visão geral e tópicos detalhados.</p></div>
+                        </div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02] hover:bg-braMagenta/[0.05] transition">
+                            <div class="w-full md:w-56 shrink-0 flex flex-col items-start gap-2">
+                                <code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/ajuda-staff</code>
+                                <span class="bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase">Staff</span>
+                            </div>
+                            <div class="flex-1"><p class="text-sm text-gray-600 font-medium">Mostra a ajuda da staff com comandos operacionais e boas práticas da equipe.</p></div>
+                        </div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braYellow/[0.05] hover:bg-braYellow/[0.1] transition rounded-b-[2rem]">
+                            <div class="w-full md:w-56 shrink-0 flex flex-col items-start gap-2">
+                                <code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/ajuda-admin</code>
+                                <span class="bg-braCyan text-white text-[9px] font-bold px-2 py-1 rounded uppercase">Admin</span>
+                            </div>
+                            <div class="flex-1"><p class="text-sm text-gray-600 font-medium">Mostra a ajuda administrativa com comandos de configuração global do servidor.</p></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="registro" class="scroll-mt-24">
+                    <h2 class="text-2xl font-amaranth font-bold text-braPurple mb-6 flex items-center gap-2 border-b border-gray-100 pb-2"><span>📝</span> Registro e Informações</h2>
+                    <div class="bg-white rounded-[2rem] shadow-sm border border-gray-100 divide-y divide-gray-50">
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50 transition"><div class="w-full md:w-56 shrink-0"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/registrar local</code></div><p class="text-sm text-gray-600 font-medium">Registra seu local.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50 transition"><div class="w-full md:w-56 shrink-0"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/registrar aniversario</code></div><p class="text-sm text-gray-600 font-medium">Registra seu aniversário para os lembretes da comunidade.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50 transition"><div class="w-full md:w-56 shrink-0"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/furros_na_area</code></div><p class="text-sm text-gray-600 font-medium">Lista todos os furries registrados em um local.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50 transition"><div class="w-full md:w-56 shrink-0"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/aniversarios</code></div><p class="text-sm text-gray-600 font-medium">Lista os aniversários registrados (é obrigatório informar o mês).</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50 transition"><div class="w-full md:w-56 shrink-0"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/perfil</code></div><p class="text-sm text-gray-600 font-medium">Mostra suas informações gerais, XP, cargos e nível atual no servidor.</p></div>
+                        
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02] hover:bg-braMagenta/[0.05] transition rounded-b-[2rem]">
+                            <div class="w-full md:w-56 shrink-0 flex flex-col items-start gap-2">
+                                <code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/registrar_usuario</code>
+                                <span class="bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase">Staff</span>
+                            </div>
+                            <p class="text-sm text-gray-600 font-medium">Registra manualmente um usuário quando o fluxo de autoatendimento falhar.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="eventos" class="scroll-mt-24">
+                    <h2 class="text-2xl font-amaranth font-bold text-braPurple mb-6 flex items-center gap-2 border-b border-gray-100 pb-2"><span>📅</span> Eventos</h2>
+                    <div class="bg-white rounded-[2rem] shadow-sm border border-gray-100 divide-y divide-gray-50">
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56 shrink-0"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/eventos</code></div><p class="text-sm text-gray-600 font-medium">Lista todos os eventos registrados, com filtro opcional por estado.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56 shrink-0"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/evento</code></div><p class="text-sm text-gray-600 font-medium">Mostra os detalhes de um evento específico.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02] rounded-b-[2rem]">
+                            <div class="w-full md:w-56 shrink-0"><span class="block mt-2 bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase w-max">Staff</span></div>
+                            <p class="text-sm text-gray-600 font-medium">O gerenciamento administrativo de eventos não é mais realizado pelo Coddy.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="xp" class="scroll-mt-24">
+                    <h2 class="text-2xl font-amaranth font-bold text-braCyan mb-6 flex items-center gap-2 border-b border-gray-100 pb-2"><span>⭐</span> XP e Roleplay</h2>
+                    <div class="bg-white rounded-[2rem] shadow-sm border border-gray-100 divide-y divide-gray-50">
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/xp</code></div><p class="text-sm text-gray-600 font-medium">Mostra a quantidade de XP de um membro (ou a sua, se não informar membro).</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/xp_ranking</code></div><p class="text-sm text-gray-600 font-medium">Mostra o ranking de XP dos membros.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/daily</code></div><p class="text-sm text-gray-600 font-medium">Pega sua recompensa diária.</p></div>
+                        
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/rp banho</code></div><p class="text-sm text-gray-600 font-medium">Ação de roleplay social e temática.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/rp trabalhar</code></div><p class="text-sm text-gray-600 font-medium">Ação para ganho de recursos baseada em tempo/cooldown.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/rp duelo</code></div><p class="text-sm text-gray-600 font-medium">Inicia um duelo textual de roleplay entre membros.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/rp desenhar</code></div><p class="text-sm text-gray-600 font-medium">Ação temática de criação artística.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/rp escrever</code></div><p class="text-sm text-gray-600 font-medium">Ação temática de criação literária.</p></div>
+
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02]"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/admin-xp ajustar</code><span class="block mt-2 bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase w-max">Staff</span></div><p class="text-sm text-gray-600 font-medium">Adiciona, remove ou altera o XP de um membro manualmente.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02]"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/admin-xp config</code><span class="block mt-2 bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase w-max">Staff</span></div><p class="text-sm text-gray-600 font-medium">Configura o multiplicador de XP global ou por canal.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02]"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/admin-xp simular</code><span class="block mt-2 bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase w-max">Staff</span></div><p class="text-sm text-gray-600 font-medium">Simula ganhos de XP ao longo do tempo para calibrar economia.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02] rounded-b-[2rem]"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/admin-xp voice-inspect</code><span class="block mt-2 bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase w-max">Staff</span></div><p class="text-sm text-gray-600 font-medium">Inspeciona auditoria e métricas de XP de voz por usuário.</p></div>
+                    </div>
+                </section>
+
+                <section id="economia" class="scroll-mt-24">
+                    <h2 class="text-2xl font-amaranth font-bold text-braYellow mb-6 flex items-center gap-2 border-b border-gray-100 pb-2"><span>💰</span> Economia</h2>
+                    <div class="bg-white rounded-[2rem] shadow-sm border border-gray-100 divide-y divide-gray-50">
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/eco apostar</code></div><p class="text-sm text-gray-600 font-medium">Aposta uma quantia de moedas contra o bot ou em jogos de sorte.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/eco saldo</code></div><p class="text-sm text-gray-600 font-medium">Exibe o saldo registrado na economia do servidor.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/eco transferir</code></div><p class="text-sm text-gray-600 font-medium">Transfere saldo para outro membro.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/eco loja</code></div><p class="text-sm text-gray-600 font-medium">Exibe os itens disponíveis na loja da comunidade.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/eco comprar</code></div><p class="text-sm text-gray-600 font-medium">Compra um item disponível na loja.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/eco inventario</code></div><p class="text-sm text-gray-600 font-medium">Exibe seu inventário de itens da economia.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-gray-50"><div class="w-full md:w-56"><code class="bg-gray-100 border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/eco chuva</code></div><p class="text-sm text-gray-600 font-medium">Inicia uma chuva de moedas no canal para os membros coletarem.</p></div>
+                        
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02]"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/admin-eco set-saldo</code><span class="block mt-2 bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase w-max">Staff</span></div><p class="text-sm text-gray-600 font-medium">Força um valor específico no saldo de um usuário.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02]"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/admin-eco loja-adicionar</code><span class="block mt-2 bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase w-max">Staff</span></div><p class="text-sm text-gray-600 font-medium">Cria um novo item vendável na economia do servidor.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 bg-braMagenta/[0.02] rounded-b-[2rem]"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/admin-eco loja-editar</code><span class="block mt-2 bg-braMagenta text-white text-[9px] font-bold px-2 py-1 rounded uppercase w-max">Staff</span></div><p class="text-sm text-gray-600 font-medium">Altera nome, preço ou propriedades de um item existente.</p></div>
+                    </div>
+                </section>
+
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                    <section id="play" class="scroll-mt-24">
+                        <h2 class="text-xl font-amaranth font-bold text-braPurple mb-4 flex items-center gap-2"><span>🎮</span> Play e Coop</h2>
+                        <ul class="space-y-3">
+                            <li class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3"><code class="font-bold text-braDark">/play boop</code> <span class="text-sm text-gray-600">Envie um boop para outro membro.</span></li>
+                            <li class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3"><code class="font-bold text-braDark">/play minigames</code> <span class="text-sm text-gray-600">Jogue minigames rápidos ou veja o ranking.</span></li>
+                            <li class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3"><code class="font-bold text-braDark">/play duelo</code> <span class="text-sm text-gray-600">Convide um membro para um duelo de cliques, saque rápido ou PPT.</span></li>
+                            <li class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3"><code class="font-bold text-braDark">/play coop boss</code> <span class="text-sm text-gray-600">Mostra o boss ativo e permite atacar.</span></li>
+                            <li class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3"><code class="font-bold text-braDark">/play coop ritual</code> <span class="text-sm text-gray-600">Inicia um ritual cooperativo com painel interativo para invocação de um novo boss.</span></li>
+                            <li class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3"><code class="font-bold text-braDark">/play coop raid</code> <span class="text-sm text-gray-600">Inicia uma raid cooperativa por fases.</span></li>
+                            <li class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3"><code class="font-bold text-braDark">/play coop expedition</code> <span class="text-sm text-gray-600">Inicia uma expedição cooperativa com entrada temporária.</span></li>
+                        </ul>
+                    </section>
+                    
+                    <section id="vip" class="scroll-mt-24">
+                        <h2 class="text-xl font-amaranth font-bold text-braYellow mb-4 flex items-center gap-2"><span>💎</span> VIP</h2>
+                        <ul class="space-y-3">
+                            <li class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-2">
+                                <code class="font-bold text-braDark w-max">/vip customizar</code> 
+                                <span class="text-sm text-gray-600">Customiza o cargo VIP do membro(icone e cor).</span>
+                            </li>
+                            <li class="bg-braMagenta/5 p-4 rounded-xl border border-braMagenta/10 flex flex-col gap-2">
+                                <div><code class="font-bold text-braMagenta">/admin vip setar_cargos</code> <span class="text-[9px] bg-white text-braMagenta px-1 rounded ml-1 font-bold">STAFF</span></div>
+                                <span class="text-sm text-gray-600">Define os cargos aceitos como VIP para este servidor.</span>
+                            </li>
+                            <li class="bg-braMagenta/5 p-4 rounded-xl border border-braMagenta/10 flex flex-col gap-2">
+                                <div><code class="font-bold text-braMagenta">/admin vip setar_intervalo</code> <span class="text-[9px] bg-white text-braMagenta px-1 rounded ml-1 font-bold">STAFF</span></div>
+                                <span class="text-sm text-gray-600">Define o intervalo onde serão posicionados os cargos VIP.</span>
+                            </li>
+                            <li class="bg-braMagenta/5 p-4 rounded-xl border border-braMagenta/10 flex flex-col gap-2">
+                                <div><code class="font-bold text-braMagenta">/admin vip setar_prefixo</code> <span class="text-[9px] bg-white text-braMagenta px-1 rounded ml-1 font-bold">STAFF</span></div>
+                                <span class="text-sm text-gray-600">Ajusta o prefixo/ícone especial no nickname VIP.</span>
+                            </li>
+                        </ul>
+                    </section>
+                </div>
+
+                <section id="moderacao" class="scroll-mt-24 border-t border-gray-200 pt-10">
+                    <h2 class="text-2xl font-amaranth font-bold text-braMagenta mb-6 flex items-center gap-2"><span>🛡️</span> Moderação e Segurança</h2>
+                    <div class="bg-braMagenta/5 rounded-[2rem] shadow-sm border border-braMagenta/20 divide-y divide-braMagenta/10">
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-white/50"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/warn</code></div><p class="text-sm text-gray-700 font-medium">Aplica advertência oficial (strike) a um infrator e grava no banco de dados.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-white/50"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/ban</code></div><p class="text-sm text-gray-700 font-medium">Bane permanentemente do servidor, com opções de deletar histórico de mensagens.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-white/50"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/notas_add</code></div><p class="text-sm text-gray-700 font-medium">Cria uma nota silenciosa (mod-note) no perfil do usuário para controle interno.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-white/50"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/portaria_aprovar</code></div><p class="text-sm text-gray-700 font-medium">Aprova manualmente a entrada de um membro preso na fila da portaria.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-white/50"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/portaria_liberar_conta</code></div><p class="text-sm text-gray-700 font-medium">Destrava conta de usuário falsamente detectado como alts/fake na portaria.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-white/50"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/chat_analisar_membro</code></div><p class="text-sm text-gray-700 font-medium">Faz uma varredura cruzada no histórico de mensagens para detecção de toxicidade.</p></div>
+                        <div class="p-5 flex flex-col md:flex-row gap-4 hover:bg-white/50"><div class="w-full md:w-56"><code class="bg-white border border-gray-200 text-braDark font-bold px-3 py-1.5 rounded-lg text-sm">/chat_resumir</code></div><p class="text-sm text-gray-700 font-medium">Gera resumo (via IA) de uma conversa ou canal extenso para análise da moderação.</p></div>
+                        
+                        <div id="seguranca" class="p-5 bg-braDark text-white">
+                            <h3 class="font-amaranth font-bold mb-3 flex items-center gap-2"><span class="text-braYellow">🔒</span> Comandos de Segurança</h3>
+                            <div class="space-y-2 mt-4">
+                                <p><code class="text-braCyan font-bold text-sm bg-white/10 px-2 py-1 rounded">/security whitelist_add</code> <span class="text-sm text-gray-300 ml-2">- Adiciona links/domínios ao filtro antispam.</span></p>
+                                <p><code class="text-braCyan font-bold text-sm bg-white/10 px-2 py-1 rounded">/security whitelist_remove</code> <span class="text-sm text-gray-300 ml-2">- Remove exceção do antispam.</span></p>
+                                <p><code class="text-braCyan font-bold text-sm bg-white/10 px-2 py-1 rounded">/security whitelist_list</code> <span class="text-sm text-gray-300 ml-2">- Exibe a whitelist atual de links.</span></p>
+                                <p><code class="text-braCyan font-bold text-sm bg-white/10 px-2 py-1 rounded">/security pendencias</code> <span class="text-sm text-gray-300 ml-2">- Central de incidentes (raids detectadas/links suspeitos).</span></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    
+                    <section id="utilitarios" class="scroll-mt-24">
+                        <h2 class="text-xl font-amaranth font-bold text-braDark mb-4">Utilitários</h2>
+                        <ul class="space-y-3">
+                            <li class="bg-white p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-braPurple block mb-1">/call_titio</code> Chama suporte técnico do bot.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/temp_role</code> (Staff) Dá cargo temporário.</li>
+                            <li class="bg-white p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-braPurple block mb-1">/recordes</code> Exibe pódios e rankings.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/recorde_adicionar_blacklist</code> (Staff) Bloqueia usuário dos rankings.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/coddy falar</code> (Staff) Bot fala via webhook.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/coddy status</code> (Staff) Gerencia status visual.</li>
+                        </ul>
+                    </section>
+
+                    <section id="relatorios" class="scroll-mt-24">
+                        <h2 class="text-xl font-amaranth font-bold text-braDark mb-4">Relatórios (Staff)</h2>
+                        <ul class="space-y-3">
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/relatorios atividades_em_alta</code> Canais com mais tráfego e XP.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/relatorios relatorio_atividades</code> Exporta CSV com métricas globais.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/relatorios portaria</code> Mostra taxas de rejeição/aprovação e funil de entrada.</li>
+                        </ul>
+                    </section>
+
+                    <section id="formularios" class="scroll-mt-24">
+                        <h2 class="text-xl font-amaranth font-bold text-braDark mb-4">Formulários (Staff)</h2>
+                        <ul class="space-y-3">
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/formulario publicar</code> Abre form de coleta.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/formulario criar</code> Define perguntas.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/formulario listar</code> Mostra formulários ativos.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/formulario configurar_portaria</code> Integra form à verificação de entrada.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/formulario editar</code> Ajusta form criado.</li>
+                            <li class="bg-gray-100 p-3 rounded-lg border border-gray-200 text-sm"><code class="font-bold text-gray-600 block mb-1">/formulario auditar_ficha_portaria</code> Verifica submissões específicas.</li>
+                        </ul>
+                    </section>
+                </div>
+
+                <section id="backup" class="scroll-mt-24 border-t border-gray-200 pt-10">
+                    <h2 class="text-2xl font-amaranth font-bold text-braDark mb-6">Backup e Migração (Staff/Admin)</h2>
+                    <div class="flex flex-wrap gap-4">
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 flex-1 min-w-[250px]"><code class="font-bold text-braDark block mb-1">/backup gerar</code><p class="text-xs text-gray-500">Cria snapshot da base de dados e cargos.</p></div>
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 flex-1 min-w-[250px]"><code class="font-bold text-braDark block mb-1">/backup listar</code><p class="text-xs text-gray-500">Lista os últimos saves de restauração.</p></div>
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 flex-1 min-w-[250px]"><code class="font-bold text-braDark block mb-1">/backup sincronizar</code><p class="text-xs text-gray-500">Força push de dados entre cluster e replicação.</p></div>
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 flex-1 min-w-[250px]"><code class="font-bold text-braDark block mb-1">/migrate permissoes canais</code><p class="text-xs text-gray-500">Atualiza ACLs baseadas no config.</p></div>
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 flex-1 min-w-[250px]"><code class="font-bold text-braDark block mb-1">/importar warns</code><p class="text-xs text-gray-500">Importa punições de outros bots de moderação.</p></div>
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 flex-1 min-w-[250px]"><code class="font-bold text-braDark block mb-1">/recover cargos</code><p class="text-xs text-gray-500">Restaura estrutura perdida pós-incidentes.</p></div>
+                    </div>
+                </section>
+
+                <section id="admin" class="scroll-mt-24 bg-braDark text-white p-8 rounded-[3rem] shadow-xl relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-64 h-64 bg-braCyan opacity-10 rounded-full blur-3xl"></div>
+                    
+                    <div class="relative z-10">
+                        <div class="flex items-center gap-3 mb-8">
+                            <span class="text-3xl">⚙️</span>
+                            <h2 class="text-3xl font-amaranth font-bold text-braCyan">Administração Geral</h2>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-8 text-sm">
+                            
+                            <div>
+                                <h3 class="text-braYellow font-bold uppercase tracking-widest text-[10px] mb-3 border-b border-white/10 pb-2">Configurações do Servidor</h3>
+                                <ul class="space-y-3 text-gray-300">
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded inline-block mb-1">/admin configurar-servidor</code><br>Sincroniza definições vitais no bot.</li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded inline-block mb-1">/admin mensagens_servidor</code><br>Altera mensagens de boas-vindas e regras.</li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded inline-block mb-1">/admin logs</code><br>Configura e consulta canais/tipos de auditoria.</li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded inline-block mb-1">/admin conectar_conta</code><br>Links de API/Serviços.</li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded inline-block mb-1">/admin atualizar-comandos</code><br>Força deploy local de comandos (reload).</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <h3 class="text-braCyan font-bold uppercase tracking-widest text-[10px] mb-3 border-b border-white/10 pb-2">Inteligência Artificial (IA)</h3>
+                                <ul class="space-y-3 text-gray-300">
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin config_ia</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin set_token_ia</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin set_admins_ia</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin canais setar_ia</code></li>
+                                </ul>
+                                
+                                <h3 class="text-braCyan font-bold uppercase tracking-widest text-[10px] mb-3 border-b border-white/10 pb-2 mt-6">Cargos e Staff</h3>
+                                <ul class="space-y-3 text-gray-300">
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin cores_staff</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin adicionar-cargo-todos</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin staff registrar | remover</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin cargos setar</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin auto-cargos configurar</code></li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <h3 class="text-braMagenta font-bold uppercase tracking-widest text-[10px] mb-3 border-b border-white/10 pb-2">Bump e Engajamento</h3>
+                                <ul class="space-y-3 text-gray-300">
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin bump setar_warn</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin bump setar_reward</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin bump setar_mensal</code></li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded">/admin canais setar_aniversario</code></li>
+                                </ul>
+                                
+                                <h3 class="text-braMagenta font-bold uppercase tracking-widest text-[10px] mb-3 border-b border-white/10 pb-2 mt-6">Hashtags e Threads Automáticas</h3>
+                                <ul class="space-y-3 text-gray-300">
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded block mb-1">/admin hashtags [ação]</code> (status, ativar, setar_canais, setar_cargo_autor, limpar_cargo_autor, mapear, desmapear)</li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded block mb-1">/admin threads [ação]</code> (status_restricao_autor, ativar_restricao_autor, setar_foruns_restritos, limpar_foruns_restritos)</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <h3 class="text-braYellow font-bold uppercase tracking-widest text-[10px] mb-3 border-b border-white/10 pb-2">Sistema Base</h3>
+                                <ul class="space-y-3 text-gray-300">
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded inline-block mb-1">/admin portaria setar</code><br>Ajusta gates e formulários de triagem.</li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded inline-block mb-1">/admin moderacao_colaborativa setar</code><br>Permite mutirão de moderação.</li>
+                                    <li><code class="text-white font-bold bg-white/10 px-2 py-1 rounded inline-block mb-1">/admin configuracoes listar</code><br>Auditoria visual de configuração por módulo.
+                                        <p class="text-[10px] mt-1 text-gray-400">Suporta: portaria, vip, bump, aniversário, IA, auto-cargos, moderação colaborativa, cargos de staff, XP.</p>
+                                    </li>
+                                </ul>
+                            </div>
+
+                        </div>
+                    </div>
+                </section>
+
+                <footer class="text-center pt-10 pb-8 opacity-50">
+                    <p class="font-amaranth font-bold uppercase tracking-widest text-xs">Fim da documentação • BraFurries 2026</p>
+                </footer>
+
+            </div>
+        </main>
+    </div>
+
+</body>
+</html>

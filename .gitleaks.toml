@@ -1,0 +1,9 @@
+# The listed tests intentionally construct synthetic Discord snowflakes to
+# exercise validation and lookup behavior. Keep this scope narrow so Gitleaks
+# continues to inspect all runtime code, documentation, and other fixtures.
+[allowlist]
+  paths = [
+    '''tests/test_bot_status_api_discord_user_lookup\.py''',
+    '''tests/test_legacy_settings_safety\.py''',
+    '''tests/test_runtime_config\.py''',
+  ]
