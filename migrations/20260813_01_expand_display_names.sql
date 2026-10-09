@@ -1,8 +1,0 @@
-ALTER TABLE users
-    MODIFY COLUMN display_name VARCHAR(100) CHARACTER SET utf8mb4;
-
-ALTER TABLE user_discord
-    MODIFY COLUMN display_name VARCHAR(100) CHARACTER SET utf8mb4;
-
-ALTER TABLE user_telegram
-    MODIFY COLUMN display_name VARCHAR(100) CHARACTER SET utf8mb4;
