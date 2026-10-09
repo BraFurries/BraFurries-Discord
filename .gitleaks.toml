@@ -1,9 +1,31 @@
-# The listed tests intentionally construct synthetic Discord snowflakes to
-# exercise validation and lookup behavior. Keep this scope narrow so Gitleaks
-# continues to inspect all runtime code, documentation, and other fixtures.
-[allowlist]
-  paths = [
-    '''tests/test_bot_status_api_discord_user_lookup\.py''',
-    '''tests/test_legacy_settings_safety\.py''',
-    '''tests/test_runtime_config\.py''',
-  ]
+# Inherit Gitleaks' official default detection rules. A custom config without
+# this stanza can otherwise silently replace all built-in detections.
+[extend]
+useDefault = true
+
+# Allow only known synthetic snowflakes in designated tests, not entire files.
+# BOTH the path and the matched synthetic value must match. Any newly added
+# credential or different numeric identifier in these files remains detectable.
+[[allowlists]]
+description = "Synthetic 18-digit Discord IDs in isolated tests"
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''^tests/test_bot_status_api_discord_user_lookup\.py$''',
+  '''^tests/test_legacy_settings_safety\.py$''',
+  '''^tests/test_runtime_config\.py$''',
+]
+regexes = [
+  '''\b1234567890123456(?:7[89]|8[0-3])\b''',
+]
+
+[[allowlists]]
+description = "Synthetic 64-bit integer overflow boundary in Discord lookup test"
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''^tests/test_bot_status_api_discord_user_lookup\.py$''',
+]
+regexes = [
+  '''\b9223372036854775808\b''',
+]
