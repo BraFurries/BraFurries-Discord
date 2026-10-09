@@ -307,9 +307,15 @@ The official Database repository stores versioned migrations under `flyway/sql/v
 
 ### Production deployment
 
-Deployment is manual through [`Deploy em Produção (manual)`](.github/workflows/prod-deploy.yaml), using `workflow_dispatch` on the protected `main` branch. The workflow runs tests, builds and publishes an immutable GHCR image, then deploys using the restricted `coddy-production` runner group and the `Produção` environment. It validates both liveness and readiness.
+[`Deploy em Produção`](.github/workflows/prod-deploy.yaml) supports **manual deployment** via `workflow_dispatch` on the protected `main` branch and **opt-in automatic deployment** on `push` to `main`.
 
-The host-side deploy wrapper must remain configured **without invoking the retired migration runner**. It may stage/promote the configured environment and roll back the previous Docker image if readiness fails; a container rollback cannot undo database schema changes. Never manually run the historical migration SQL from this repository as part of deployment.
+To enable automatic deployment, create the repository Actions variable `CODDY_AUTO_DEPLOY_ENABLED` with the exact value `true` (Settings → Secrets and variables → Actions → Variables). With the variable absent or different from `true`, pushes to `main` do **not** build or deploy production; manual dispatch continues to work. Setting it to `false` pauses future automatic deploys without changing the workflow. **Merging this workflow alone does not enable automatic deployment.**
+
+For an enabled push, the production workflow runs a pinned Gitleaks history scan, executes the Python tests, builds and publishes an immutable GHCR image, and deploys via the restricted `coddy-production` runner group and the `Produção` environment. It validates liveness and readiness and refuses to deploy a stale commit if `main` has advanced in the meantime. Pull request events never access the production runner or production secrets. The separate `PR Validation` workflow continues to check PRs and pushes.
+
+**Database and cross-repo ordering:** before merging Coddy changes that depend on a new schema or API contract, ensure the corresponding reviewed Database migration and compatible API version are already deployed. There is **no automatic schema readiness check** in this workflow, and the container rollback cannot revert migrations. If rollout ordering cannot be guaranteed, set `CODDY_AUTO_DEPLOY_ENABLED=false`, deploy the dependencies first and use manual dispatch for the coordinated release. Do not treat a passing CI as proof of production schema compatibility.
+
+The host-side deploy wrapper must remain configured **without PM2 or the retired migration runner**. It may stage/promote the configured environment and roll back the previous Docker image if readiness fails; never run historical migration SQL from this repository as part of deployment.
 
 ### Legacy runtime schema mutations
 
