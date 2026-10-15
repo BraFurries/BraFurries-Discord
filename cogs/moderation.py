@@ -2100,7 +2100,7 @@ class ModerationCog(commands.Cog):
             if target_error:
                 return await ctx.response.send_message(content=target_error, ephemeral=True)
 
-        await ctx.response.send_message("Registrando warn...", ephemeral=True)
+        await ctx.response.send_message("Registrando warn...")
 
         if mute_member is not None and mute_delta is not None:
             try:
