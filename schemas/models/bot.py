@@ -2,6 +2,8 @@ from discord.ext import commands
 from collections.abc import Awaitable, Callable
 import logging
 
+from core.discord_ratelimit_compat import install_discord_ratelimit_compat
+
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,9 @@ class MyBot(commands.Bot):
         # Prevent discord.py from sleeping indefinitely on a per-route cooldown.
         # The Discord-imposed retry_after is respected; this only bounds local waiting.
         kwargs.setdefault("max_ratelimit_timeout", 120.0)
+        # discord.py 2.3.2 must not treat a distant reset as a cooldown
+        # while the route still has available request tokens.
+        install_discord_ratelimit_compat()
         super(MyBot, self).__init__(*args, **kwargs)
         self.config = config
         self._startup_callbacks: list[Callable[[], Awaitable[None]]] = []
