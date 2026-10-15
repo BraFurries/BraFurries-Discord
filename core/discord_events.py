@@ -259,6 +259,9 @@ async def logMute(
     member: discord.abc.User,
     mute_until: datetime | None,
     moment: datetime | None = None,
+    *,
+    moderator: discord.abc.User | None = None,
+    reason: str | None = None,
 ):
     """Send a mute log message if logging is enabled for this guild."""
     config = getLogConfig(guild.id, "mute")
@@ -269,11 +272,14 @@ async def logMute(
     if channel is None:
         return
 
-    audit_entry = await _get_mute_audit_entry(guild, member.id, mute_until)
-    moderator = getattr(audit_entry, "user", None)
-    reason = (getattr(audit_entry, "reason", None) or "").strip()
-    if not reason:
-        reason = "Não especificado"
+    if moderator is None or not (reason or "").strip():
+        audit_entry = await _get_mute_audit_entry(guild, member.id, mute_until)
+        if moderator is None:
+            moderator = getattr(audit_entry, "user", None)
+        if not (reason or "").strip():
+            reason = getattr(audit_entry, "reason", None)
+
+    reason = (reason or "").strip() or "Não especificado"
     moderator_display = (
         moderator.mention if isinstance(moderator, discord.abc.User) else "Desconhecido"
     )
