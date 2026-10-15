@@ -24,7 +24,7 @@ from core.database import (
 from core.verifications import verifyDate
 from core.database import *
 from core.time_functions import MONTHS
-from core.discord_events import logWarn, logBan, getStaffRoles
+from core.discord_events import logWarn, logBan, logMute, getStaffRoles
 from core.notifications import notify_owner_and_user
 from core.identity_api import IdentityApiError, get_identity_summary
 from core.identity_bans import (
@@ -48,6 +48,51 @@ BIRTHDAY_REGEX = re.compile(
     r'(?:\s?(?:d[eo]|\/|\\|\.|-)\s?|\s?)'
     r'(\d(?:\s?\d){1,3})'
 )
+
+
+def parse_timeout_duration(duration: str) -> timedelta | None:
+    """Parse a Discord timeout duration.
+
+    Supported units are minutes (m), hours (h), days (d) and weeks (w).
+    Multiple units may be combined, for example 1d12h. Discord timeouts
+    are capped at 28 days. This intentionally does not reuse the legacy
+    /ban parser, where m means months and s means weeks.
+    """
+    normalized = re.sub(r"\s+", "", (duration or "").strip().lower())
+    if not normalized:
+        return None
+
+    unit_seconds = {
+        "m": 60,
+        "h": 60 * 60,
+        "d": 24 * 60 * 60,
+        "w": 7 * 24 * 60 * 60,
+    }
+    max_seconds = 28 * 24 * 60 * 60
+    total_seconds = 0
+    position = 0
+
+    for match in re.finditer(r"(\d+)([mhdw])", normalized):
+        if match.start() != position:
+            return None
+        amount = int(match.group(1))
+        if amount <= 0:
+            return None
+        total_seconds += amount * unit_seconds[match.group(2)]
+        if total_seconds > max_seconds:
+            return None
+        position = match.end()
+
+    if position != len(normalized) or total_seconds < 60:
+        return None
+
+    return timedelta(seconds=total_seconds)
+
+
+def format_timeout_until(timeout_until: datetime) -> str:
+    """Render one timeout deadline using Discord local timestamp syntax."""
+    timestamp = int(timeout_until.timestamp())
+    return f"<t:{timestamp}:F> (<t:{timestamp}:R>)"
 
 
 def should_include_identity_aggregate(actor_is_staff: bool, ephemeral: bool) -> bool:
@@ -1910,150 +1955,493 @@ class ModerationCog(commands.Cog):
 
 
 
-    @app_commands.command(name=f'warn', description=f'Aplica um warn em um membro')
+    @staticmethod
+    async def _resolve_timeout_member(
+        ctx: discord.Interaction,
+        user: discord.User,
+    ) -> discord.Member | None:
+        if isinstance(user, discord.Member):
+            return user
+        if ctx.guild is None:
+            return None
+
+        cached = ctx.guild.get_member(user.id)
+        if cached is not None:
+            return cached
+
+        try:
+            return await ctx.guild.fetch_member(user.id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
+
+    @staticmethod
+    def _timeout_target_error(
+        ctx: discord.Interaction,
+        member: discord.Member,
+    ) -> str | None:
+        guild = ctx.guild
+        actor = ctx.user
+        if guild is None or not isinstance(actor, discord.Member):
+            return "Este comando só pode ser usado dentro de um servidor."
+
+        if member.id == actor.id:
+            return "Você não pode aplicar castigo em si mesmo."
+        if member.id == guild.owner_id:
+            return "O dono do servidor não pode receber timeout."
+        if member.bot:
+            return "Bots não podem receber este castigo."
+
+        if actor.id != guild.owner_id and member.top_role >= actor.top_role:
+            return (
+                "Você não pode aplicar castigo em um membro com cargo igual ou "
+                "superior ao seu."
+            )
+
+        bot_member = guild.me
+        if bot_member is None:
+            return "Não foi possível validar as permissões do Coddy neste servidor."
+        if not bot_member.guild_permissions.moderate_members:
+            return "O Coddy precisa da permissão Moderar membros para aplicar o castigo."
+        if member.top_role >= bot_member.top_role:
+            return (
+                "O Coddy não pode aplicar castigo neste membro por causa da "
+                "hierarquia de cargos."
+            )
+
+        return None
+
+    @staticmethod
+    async def _apply_timeout(
+        member: discord.Member,
+        duration: timedelta,
+        *,
+        reason: str,
+    ) -> tuple[datetime, datetime | None, bool]:
+        requested_until = discord.utils.utcnow() + duration
+        previous_until = getattr(member, "timed_out_until", None)
+        if previous_until is not None and previous_until.tzinfo is None:
+            previous_until = previous_until.replace(tzinfo=timezone.utc)
+
+        if previous_until is not None and previous_until > requested_until:
+            return previous_until, previous_until, False
+
+        await member.timeout(requested_until, reason=reason[:512])
+        return requested_until, previous_until, True
+
+    @staticmethod
+    async def _restore_timeout(
+        member: discord.Member,
+        previous_until: datetime | None,
+    ) -> bool:
+        try:
+            await member.timeout(
+                previous_until,
+                reason="Reversão automática: falha ao registrar o warn.",
+            )
+            return True
+        except (discord.Forbidden, discord.HTTPException):
+            logging.exception(
+                "Falha ao restaurar timeout anterior do membro %s após erro no warn.",
+                member.id,
+            )
+            return False
+
+    @app_commands.command(name='warn', description='Aplica um warn em um membro')
+    @app_commands.describe(
+        membro='Membro que receberá o warn',
+        motivo='Motivo do warn',
+        castigo='Mute opcional: 30m, 2h, 3d, 1w ou combinações como 1d12h',
+        notificar='Enviar mensagem privada ao membro. Padrão: sim.',
+    )
     async def warn(
-        self, ctx: discord.Interaction, membro: discord.User, motivo: str, notificar: bool = True
+        self,
+        ctx: discord.Interaction,
+        membro: discord.User,
+        motivo: str,
+        castigo: str | None = None,
+        notificar: bool = True,
     ):
-        await ctx.response.send_message("Registrando warn...")
         staff_roles = getStaffRoles(ctx.guild)
-        if any(role in ctx.user.roles for role in staff_roles):
-            warnings = warnMember(ctx.guild.id, membro, motivo, ctx.user)
-            if warnings:
-                direct_warning_count = warnings["warningsCount"]
+        if not any(role in ctx.user.roles for role in staff_roles):
+            return await ctx.response.send_message(
+                content='Você não tem permissão para fazer isso.',
+                ephemeral=True,
+            )
+
+        mute_member: discord.Member | None = None
+        mute_delta: timedelta | None = None
+        mute_until: datetime | None = None
+        previous_timeout: datetime | None = None
+        timeout_changed = False
+
+        if castigo:
+            mute_delta = parse_timeout_duration(castigo)
+            if mute_delta is None:
+                return await ctx.response.send_message(
+                    content=(
+                        'Duração de castigo inválida. Use m para minutos, h para horas, '
+                        'd para dias e w para semanas. Exemplos: 30m, 2h, 3d, '
+                        '1w, 1d12h. Máximo: 28 dias.'
+                    ),
+                    ephemeral=True,
+                )
+
+            mute_member = await self._resolve_timeout_member(ctx, membro)
+            if mute_member is None:
+                return await ctx.response.send_message(
+                    content=(
+                        'O membro não está no servidor, então o castigo não pode ser aplicado. '
+                        'O warn não foi registrado.'
+                    ),
+                    ephemeral=True,
+                )
+
+            target_error = self._timeout_target_error(ctx, mute_member)
+            if target_error:
+                return await ctx.response.send_message(content=target_error, ephemeral=True)
+
+        await ctx.response.send_message("Registrando warn...", ephemeral=True)
+
+        if mute_member is not None and mute_delta is not None:
+            try:
+                mute_until, previous_timeout, timeout_changed = await self._apply_timeout(
+                    mute_member,
+                    mute_delta,
+                    reason=f"Warn: {motivo}",
+                )
+            except discord.Forbidden:
+                return await ctx.edit_original_response(
+                    content=(
+                        'O Discord recusou o castigo por falta de permissão ou hierarquia. '
+                        'O warn não foi registrado.'
+                    )
+                )
+            except discord.HTTPException:
+                logging.exception(
+                    "Falha ao aplicar timeout antes do warn: guild=%s member=%s",
+                    ctx.guild.id,
+                    mute_member.id,
+                )
+                return await ctx.edit_original_response(
+                    content=(
+                        'Não foi possível aplicar o castigo no Discord. '
+                        'O warn não foi registrado para evitar uma punição parcial.'
+                    )
+                )
+
+        warnings = warnMember(ctx.guild.id, membro, motivo, ctx.user)
+        if not warnings:
+            compensation_note = ""
+            if mute_member is not None and timeout_changed:
+                restored = await self._restore_timeout(mute_member, previous_timeout)
+                compensation_note = (
+                    " O castigo aplicado foi revertido."
+                    if restored
+                    else (
+                        " Atenção: não foi possível reverter automaticamente o castigo; "
+                        "a staff deve revisar o membro."
+                    )
+                )
+            return await ctx.edit_original_response(
+                content=(
+                    f'Não foi possível registrar o warn no membro {membro.mention}.'
+                    f'{compensation_note}'
+                )
+            )
+
+        direct_warning_count = warnings["warningsCount"]
+        try:
+            warnings["warningsCount"] = await confirmed_warning_count_for_limit(
+                membro.id,
+                getCommunityId(ctx.guild.id),
+            )
+        except (IdentityApiError, LookupError, ValueError):
+            logging.exception(
+                "Não foi possível validar o limite agregado de warns para %s na guild %s",
+                membro.id,
+                ctx.guild.id,
+            )
+            warning_limit = int(warnings["warningsLimit"])
+            warn_embed = discord.Embed(
+                title="Warn registrado",
+                description=f"{membro.mention} recebeu um warn.",
+                color=discord.Color.orange(),
+                timestamp=now(),
+            )
+            warn_embed.set_thumbnail(url=membro.display_avatar.url)
+            warn_embed.add_field(
+                name="Membro",
+                value=f"{membro} ({membro.id})",
+                inline=False,
+            )
+            warn_embed.add_field(
+                name="Aplicado por",
+                value=f"{ctx.user} ({ctx.user.mention})",
+                inline=False,
+            )
+            warn_embed.add_field(name="Motivo", value=motivo, inline=False)
+            warn_embed.add_field(
+                name="Total de warns",
+                value=(
+                    f"{direct_warning_count} nesta conta; "
+                    f"total do cluster confirmado indisponível/{warning_limit}"
+                ),
+                inline=False,
+            )
+            if mute_until is not None:
+                warn_embed.add_field(
+                    name="Castigo",
+                    value=format_timeout_until(mute_until),
+                    inline=False,
+                )
+            await logWarn(
+                ctx.guild,
+                membro,
+                ctx.user,
+                motivo,
+                direct_warning_count,
+            )
+            if mute_member is not None and timeout_changed and mute_until is not None:
                 try:
-                    warnings["warningsCount"] = await confirmed_warning_count_for_limit(
-                        membro.id,
-                        getCommunityId(ctx.guild.id),
-                    )
-                except (IdentityApiError, LookupError, ValueError):
+                    await logMute(ctx.guild, mute_member, mute_until)
+                except (discord.Forbidden, discord.HTTPException):
                     logging.exception(
-                        "Não foi possível validar o limite agregado de warns para %s na guild %s",
-                        membro.id,
+                        "Não foi possível registrar o log do mute: guild=%s member=%s",
                         ctx.guild.id,
-                    )
-                    warning_limit = int(warnings["warningsLimit"])
-                    warn_embed = discord.Embed(
-                        title="Warn registrado",
-                        description=f"{membro.mention} recebeu um warn.",
-                        color=discord.Color.orange(),
-                        timestamp=now(),
-                    )
-                    warn_embed.set_thumbnail(url=membro.display_avatar.url)
-                    warn_embed.add_field(
-                        name="Membro",
-                        value=f"{membro} ({membro.id})",
-                        inline=False,
-                    )
-                    warn_embed.add_field(
-                        name="Aplicado por",
-                        value=f"{ctx.user} ({ctx.user.mention})",
-                        inline=False,
-                    )
-                    warn_embed.add_field(name="Motivo", value=motivo, inline=False)
-                    warn_embed.add_field(
-                        name="Total de warns",
-                        value=(
-                            f"{direct_warning_count} nesta conta; "
-                            f"total do cluster confirmado indisponível/{warning_limit}"
-                        ),
-                        inline=False,
-                    )
-                    await logWarn(
-                        ctx.guild,
-                        membro,
-                        ctx.user,
-                        motivo,
-                        direct_warning_count,
-                    )
-                    notification_note = await self._send_warn_notification(
-                        membro,
-                        f'Você recebeu um warn por "{motivo}".',
-                        enabled=notificar,
-                    )
-                    return await ctx.edit_original_response(
-                        content=(
-                            "Warn registrado, mas não foi possível validar o total de warns "
-                            "do cluster confirmado. O limite de banimento não foi avaliado; "
-                            "a staff deve revisar o caso."
-                            f"{notification_note}"
-                        ),
-                        embed=warn_embed,
+                        mute_member.id,
                     )
 
-                warn_embed = discord.Embed(
-                    title="Warn registrado",
-                    description=f"{membro.mention} recebeu um warn.",
-                    color=discord.Color.orange(),
-                    timestamp=now(),
-                )
-                warn_embed.set_thumbnail(url=membro.display_avatar.url)
-                warn_embed.add_field(
-                    name="Membro",
-                    value=f"{membro} ({membro.id})",
-                    inline=False,
-                )
-                warn_embed.add_field(
-                    name="Aplicado por",
-                    value=f"{ctx.user} ({ctx.user.mention})",
-                    inline=False,
-                )
-                warn_embed.add_field(name="Motivo", value=motivo, inline=False)
-                warn_embed.add_field(
-                    name="Total de warns",
-                    value=f"{warnings['warningsCount']}/{warnings['warningsLimit']}",
-                    inline=False,
-                )
-                await logWarn(
-                    ctx.guild,
-                    membro,
-                    ctx.user,
-                    motivo,
-                    warnings["warningsCount"],
-                )
-                if warnings["warningsCount"] < (int(warnings["warningsLimit"]) - 1):
-                    notification_note = await self._send_warn_notification(
-                        membro,
-                        f'Você recebeu um warn por "{motivo}", totalizando {warnings["warningsCount"]}! Cuidado com suas ações no servidor!',
-                        enabled=notificar,
-                    )
-                    return await ctx.edit_original_response(
-                        content=(
-                            f'Warn registrado com sucesso! total de {warnings["warningsCount"]} warns no membro {membro.mention}'
-                            f"{notification_note}"
-                        ),
-                        embed=warn_embed,
-                    )
-                elif warnings["warningsCount"] < (int(warnings["warningsLimit"])):
-                    notification_note = await self._send_warn_notification(
-                        membro,
-                        f'Você recebeu um warn por "{motivo}", totalizando {warnings["warningsCount"]}! Cuidado, caso receba mais um warn, você será banido do servidor',
-                        enabled=notificar,
-                    )
-                    return await ctx.edit_original_response(
-                        content=(
-                            f'Warn registrado com sucesso! total de {warnings["warningsCount"]} warns no membro {membro.mention} \nAvise ao membro sobre o risco de banimento!'
-                            f"{notification_note}"
-                        ),
-                        embed=warn_embed,
-                    )
-                else:
-                    notification_note = await self._send_warn_notification(
-                        membro,
-                        f'Você recebeu um warn por "{motivo}" e atingiu o limite de {warnings["warningsCount"]} warnings do servidor!',
-                        enabled=notificar,
-                    )
-                    return await ctx.edit_original_response(
-                        content=(
-                            f'Warn registrado com sucesso! \nCom esse warn, o membro {membro.mention} atingiu o limite de warns do servidor e deverá ser **Banido**'
-                            f"{notification_note}"
-                        ),
-                        embed=warn_embed,
-                    )
-            return await ctx.edit_original_response(
-                content=f'Não foi possível aplicar o warn no membro {membro.mention}'
+            punishment_dm = (
+                f" Você também recebeu um castigo até {format_timeout_until(mute_until)}."
+                if mute_until is not None
+                else ""
             )
+            notification_note = await self._send_warn_notification(
+                membro,
+                f'Você recebeu um warn por "{motivo}".{punishment_dm}',
+                enabled=notificar,
+            )
+            punishment_note = (
+                f" Castigo ativo até {format_timeout_until(mute_until)}."
+                if mute_until is not None
+                else ""
+            )
+            return await ctx.edit_original_response(
+                content=(
+                    "Warn registrado, mas não foi possível validar o total de warns "
+                    "do cluster confirmado. O limite de banimento não foi avaliado; "
+                    "a staff deve revisar o caso."
+                    f"{punishment_note}{notification_note}"
+                ),
+                embed=warn_embed,
+            )
+
+        warn_embed = discord.Embed(
+            title="Warn registrado",
+            description=f"{membro.mention} recebeu um warn.",
+            color=discord.Color.orange(),
+            timestamp=now(),
+        )
+        warn_embed.set_thumbnail(url=membro.display_avatar.url)
+        warn_embed.add_field(
+            name="Membro",
+            value=f"{membro} ({membro.id})",
+            inline=False,
+        )
+        warn_embed.add_field(
+            name="Aplicado por",
+            value=f"{ctx.user} ({ctx.user.mention})",
+            inline=False,
+        )
+        warn_embed.add_field(name="Motivo", value=motivo, inline=False)
+        warn_embed.add_field(
+            name="Total de warns",
+            value=f"{warnings['warningsCount']}/{warnings['warningsLimit']}",
+            inline=False,
+        )
+        if mute_until is not None:
+            warn_embed.add_field(
+                name="Castigo",
+                value=format_timeout_until(mute_until),
+                inline=False,
+            )
+
+        await logWarn(
+            ctx.guild,
+            membro,
+            ctx.user,
+            motivo,
+            warnings["warningsCount"],
+        )
+        if mute_member is not None and timeout_changed and mute_until is not None:
+            try:
+                await logMute(ctx.guild, mute_member, mute_until)
+            except (discord.Forbidden, discord.HTTPException):
+                logging.exception(
+                    "Não foi possível registrar o log do mute: guild=%s member=%s",
+                    ctx.guild.id,
+                    mute_member.id,
+                )
+
+        punishment_dm = (
+            f" Você também recebeu um castigo até {format_timeout_until(mute_until)}."
+            if mute_until is not None
+            else ""
+        )
+        punishment_note = (
+            f" Castigo ativo até {format_timeout_until(mute_until)}."
+            if mute_until is not None
+            else ""
+        )
+
+        if warnings["warningsCount"] < (int(warnings["warningsLimit"]) - 1):
+            notification_note = await self._send_warn_notification(
+                membro,
+                (
+                    f'Você recebeu um warn por "{motivo}", totalizando '
+                    f'{warnings["warningsCount"]}! Cuidado com suas ações no servidor!'
+                    f'{punishment_dm}'
+                ),
+                enabled=notificar,
+            )
+            return await ctx.edit_original_response(
+                content=(
+                    f'Warn registrado com sucesso! total de {warnings["warningsCount"]} '
+                    f'warns no membro {membro.mention}.'
+                    f'{punishment_note}{notification_note}'
+                ),
+                embed=warn_embed,
+            )
+        if warnings["warningsCount"] < int(warnings["warningsLimit"]):
+            notification_note = await self._send_warn_notification(
+                membro,
+                (
+                    f'Você recebeu um warn por "{motivo}", totalizando '
+                    f'{warnings["warningsCount"]}! Cuidado, caso receba mais um warn, '
+                    f'você será banido do servidor.{punishment_dm}'
+                ),
+                enabled=notificar,
+            )
+            return await ctx.edit_original_response(
+                content=(
+                    f'Warn registrado com sucesso! total de {warnings["warningsCount"]} '
+                    f'warns no membro {membro.mention}.\n'
+                    f'Avise ao membro sobre o risco de banimento!'
+                    f'{punishment_note}{notification_note}'
+                ),
+                embed=warn_embed,
+            )
+
+        notification_note = await self._send_warn_notification(
+            membro,
+            (
+                f'Você recebeu um warn por "{motivo}" e atingiu o limite de '
+                f'{warnings["warningsCount"]} warnings do servidor!{punishment_dm}'
+            ),
+            enabled=notificar,
+        )
         return await ctx.edit_original_response(
-            content='Você não tem permissão para fazer isso'
+            content=(
+                f'Warn registrado com sucesso!\nCom esse warn, o membro {membro.mention} '
+                f'atingiu o limite de warns do servidor e deverá ser Banido.'
+                f'{punishment_note}{notification_note}'
+            ),
+            embed=warn_embed,
+        )
+
+    @app_commands.command(name='mute', description='Aplica um castigo temporário em um membro')
+    @app_commands.describe(
+        membro='Membro que receberá o castigo',
+        duracao='30m, 2h, 3d, 1w ou combinações como 1d12h. Máximo: 28 dias.',
+        motivo='Motivo do castigo',
+        notificar='Enviar mensagem privada ao membro. Padrão: sim.',
+    )
+    async def mute(
+        self,
+        ctx: discord.Interaction,
+        membro: discord.Member,
+        duracao: str,
+        motivo: str,
+        notificar: bool = True,
+    ):
+        staff_roles = getStaffRoles(ctx.guild)
+        if not any(role in ctx.user.roles for role in staff_roles):
+            return await ctx.response.send_message(
+                content='Você não tem permissão para fazer isso.',
+                ephemeral=True,
+            )
+
+        delta = parse_timeout_duration(duracao)
+        if delta is None:
+            return await ctx.response.send_message(
+                content=(
+                    'Duração inválida. Use m para minutos, h para horas, '
+                    'd para dias e w para semanas. Exemplos: 30m, 2h, '
+                    '3d, 1w, 1d12h. Máximo: 28 dias.'
+                ),
+                ephemeral=True,
+            )
+
+        target_error = self._timeout_target_error(ctx, membro)
+        if target_error:
+            return await ctx.response.send_message(content=target_error, ephemeral=True)
+
+        await ctx.response.send_message(content='Aplicando castigo...', ephemeral=True)
+
+        try:
+            mute_until, previous_until, timeout_changed = await self._apply_timeout(
+                membro,
+                delta,
+                reason=motivo,
+            )
+        except discord.Forbidden:
+            return await ctx.edit_original_response(
+                content='O Discord recusou o castigo por falta de permissão ou hierarquia.'
+            )
+        except discord.HTTPException:
+            logging.exception(
+                "Falha ao aplicar mute: guild=%s member=%s",
+                ctx.guild.id,
+                membro.id,
+            )
+            return await ctx.edit_original_response(
+                content='Não foi possível aplicar o castigo no Discord.'
+            )
+
+        if timeout_changed:
+            try:
+                await logMute(ctx.guild, membro, mute_until)
+            except (discord.Forbidden, discord.HTTPException):
+                logging.exception(
+                    "Não foi possível registrar o log do mute: guild=%s member=%s",
+                    ctx.guild.id,
+                    membro.id,
+                )
+
+        notification_note = ""
+        if notificar:
+            try:
+                await membro.send(
+                    f'Você recebeu um castigo em {ctx.guild.name} por "{motivo}". '
+                    f'Fim do castigo: {format_timeout_until(mute_until)}.'
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                notification_note = " Não foi possível enviar mensagem privada para o membro."
+
+        if not timeout_changed and previous_until is not None:
+            return await ctx.edit_original_response(
+                content=(
+                    f'{membro.mention} já possuía um castigo mais longo. '
+                    f'O prazo existente foi preservado até {format_timeout_until(mute_until)}.'
+                    f'{notification_note}'
+                )
+            )
+
+        return await ctx.edit_original_response(
+            content=(
+                f'Castigo aplicado em {membro.mention} até {format_timeout_until(mute_until)}.'
+                f'{notification_note}'
+            )
         )
 
     @app_commands.command(name='ban', description='Bane um membro do servidor e registra o banimento')
