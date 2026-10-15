@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import discord
@@ -13,6 +14,11 @@ import discord
 CHANNEL_CREATION_DELAY_SECONDS = 0.8
 ROLE_MUTATION_DELAY_SECONDS = 0.5
 ROLE_MUTATION_TIMEOUT_SECONDS = 300.0
+# Budget for explicit Discord role cooldowns during a restore, not per role.
+# The regular bot keeps its 120s bound; only the restore worker waits longer.
+ROLE_RESTORE_COOLDOWN_BUDGET_SECONDS = 3600.0
+ROLE_RESTORE_COOLDOWN_MAX_RETRIES = 3
+ROLE_RESTORE_COOLDOWN_MARGIN_SECONDS = 1.0
 RESTORABLE_CHANNEL_TYPES = {0, 2, 4, 5, 13, 15}
 RESTORE_SCOPES = {"full", "roles", "channels", "permissions"}
 _CREATE_NEW = "CREATE_NEW"
@@ -1029,6 +1035,110 @@ class BackupRestoreEngine:
                 detail=detail,
             )
 
+        role_cooldown_waited_seconds = 0.0
+
+        async def run_role_mutation_with_cooldown(
+            mutate,
+            *,
+            role_data: dict,
+            role_operation: str,
+            previous_role_ids: Optional[set[int]] = None,
+        ):
+            """Retry a Discord role mutation when the client rejects a long bucket window.
+
+            discord.py 2.3.2 raises RateLimited before issuing an HTTP request if
+            bucket.expires is more than MyBot.max_ratelimit_timeout (120s) away,
+            even when the bucket still has remaining capacity. Sleep *outside*
+            the 300s per-request watchdog. Never modify the client's HTTP buckets.
+            """
+            nonlocal role_cooldown_waited_seconds
+            retries = 0
+            while True:
+                try:
+                    return await asyncio.wait_for(
+                        mutate(), timeout=ROLE_MUTATION_TIMEOUT_SECONDS
+                    )
+                except discord.RateLimited as exc:
+                    retries += 1
+                    retry_after = float(exc.retry_after)
+                    delay = max(ROLE_RESTORE_COOLDOWN_MARGIN_SECONDS,
+                                retry_after + ROLE_RESTORE_COOLDOWN_MARGIN_SECONDS)
+                    remaining_budget = (
+                        ROLE_RESTORE_COOLDOWN_BUDGET_SECONDS
+                        - role_cooldown_waited_seconds
+                    )
+                    if (
+                        not math.isfinite(delay)
+                        or retries > ROLE_RESTORE_COOLDOWN_MAX_RETRIES
+                        or delay > remaining_budget
+                    ):
+                        logger.warning(
+                            "Backup role cooldown exceeds bounded restore budget: "
+                            "guild=%s backup=%s role=%s operation=%s "
+                            "retry_after=%s waited=%s budget=%s attempts=%s",
+                            guild.id, backup_id, role_data["name"], role_operation,
+                            retry_after, role_cooldown_waited_seconds,
+                            ROLE_RESTORE_COOLDOWN_BUDGET_SECONDS, retries,
+                        )
+                        raise
+
+                    if role_operation == "create":
+                        # An uncertain POST must not blindly produce a second role.
+                        # The read-only reconciliation checks Discord, not gateway cache.
+                        reconciliation = await self._find_possible_created_role(
+                            guild, role_data, previous_role_ids or set()
+                        )
+                        if reconciliation["state"] != "not_found":
+                            logger.warning(
+                                "Backup role retry not safe after uncertain creation: "
+                                "guild=%s backup=%s role=%s reconciliation=%s",
+                                guild.id, backup_id, role_data["name"],
+                                reconciliation,
+                            )
+                            raise
+
+                    role_cooldown_waited_seconds += delay
+                    retry_at = (
+                        datetime.now(timezone.utc) + timedelta(seconds=delay)
+                    ).isoformat()
+                    progress(
+                        "ROLE_RATE_LIMIT_WAITING",
+                        "RUNNING",
+                        (
+                            f"Aguardando o cooldown de cargo do Discord "
+                            f"({int(delay)}s) para continuar com {role_data['name']}."
+                        ),
+                        detail={
+                            "backupRoleId": int(role_data["id"]),
+                            "operation": role_operation,
+                            "retryAfterSeconds": round(retry_after, 2),
+                            "waitSeconds": round(delay, 2),
+                            "retryAt": retry_at,
+                            "totalWaitSeconds": round(role_cooldown_waited_seconds, 2),
+                            "waitBudgetSeconds": ROLE_RESTORE_COOLDOWN_BUDGET_SECONDS,
+                        },
+                        advance=False,
+                    )
+                    logger.info(
+                        "Backup restore waiting on Discord role cooldown: "
+                        "guild=%s backup=%s role=%s operation=%s delay=%ss "
+                        "cumulative_wait=%ss",
+                        guild.id, backup_id, role_data["name"], role_operation,
+                        round(delay, 2), round(role_cooldown_waited_seconds, 2),
+                    )
+                    await asyncio.sleep(delay)
+                    progress(
+                        "ROLE_RATE_LIMIT_RETRY",
+                        "RUNNING",
+                        f"Cooldown finalizado; retomando cargo {role_data['name']}.",
+                        detail={
+                            "backupRoleId": int(role_data["id"]),
+                            "operation": role_operation,
+                            "attempt": retries,
+                        },
+                        advance=False,
+                    )
+
         duplicate_strategy = str(decision.get("duplicateStrategy") or "explicit").lower()
         resolutions = decision.get("roleResolutions") or {}
         if not isinstance(resolutions, dict):
@@ -1111,8 +1221,8 @@ class BackupRestoreEngine:
             )
             previous_role_ids = {int(role.id) for role in guild.roles}
             try:
-                role, action = await asyncio.wait_for(
-                    self._resolve_role(
+                role, action = await run_role_mutation_with_cooldown(
+                    lambda: self._resolve_role(
                         guild,
                         backup_id,
                         role_data,
@@ -1120,7 +1230,9 @@ class BackupRestoreEngine:
                         duplicate_strategy=duplicate_strategy,
                         explicit_resolution=resolutions.get(str(backup_role_pk)),
                     ),
-                    timeout=ROLE_MUTATION_TIMEOUT_SECONDS,
+                    role_data=role_data,
+                    role_operation="create",
+                    previous_role_ids=previous_role_ids,
                 )
             except discord.RateLimited as exc:
                 reconciliation = await self._find_possible_created_role(
@@ -1224,8 +1336,8 @@ class BackupRestoreEngine:
                 and role != guild.default_role
             ):
                 try:
-                    await asyncio.wait_for(
-                        role.edit(
+                    await run_role_mutation_with_cooldown(
+                        lambda: role.edit(
                             name=role_data["name"],
                             colour=discord.Colour(int(role_data["color"] or 0)),
                             permissions=discord.Permissions(int(role_data["permissions"] or 0)),
@@ -1233,7 +1345,8 @@ class BackupRestoreEngine:
                             mentionable=bool(role_data["mentionable"]),
                             reason=f"Sincronização do backup {backup_id}",
                         ),
-                        timeout=ROLE_MUTATION_TIMEOUT_SECONDS,
+                        role_data=role_data,
+                        role_operation="edit",
                     )
                     role_mutated = True
                 except discord.RateLimited as exc:
@@ -2005,7 +2118,7 @@ class BackupRestoreEngine:
             )
         except discord.RateLimited as exc:
             logger.warning(
-                "Backup role creation blocked by Discord cooldown: "
+                "Backup role creation deferred by Discord client cooldown: "
                 "guild=%s backup=%s role=%s retry_after=%ss bucket=%s",
                 guild.id, backup_id, role_data["name"],
                 round(float(exc.retry_after), 2),
