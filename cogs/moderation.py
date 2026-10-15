@@ -2203,7 +2203,7 @@ class ModerationCog(commands.Cog):
             )
             if mute_member is not None and timeout_changed and mute_until is not None:
                 try:
-                    await logMute(ctx.guild, mute_member, mute_until)
+                    await logMute(\n                        ctx.guild,\n                        mute_member,\n                        mute_until,\n                        moderator=ctx.user,\n                        reason=f\"Warn: {motivo}\",\n                    )
                 except (discord.Forbidden, discord.HTTPException):
                     logging.exception(
                         "Não foi possível registrar o log do mute: guild=%s member=%s",
@@ -2410,7 +2410,7 @@ class ModerationCog(commands.Cog):
 
         if timeout_changed:
             try:
-                await logMute(ctx.guild, membro, mute_until)
+                await logMute(\n                    ctx.guild,\n                    membro,\n                    mute_until,\n                    moderator=ctx.user,\n                    reason=motivo,\n                )
             except (discord.Forbidden, discord.HTTPException):
                 logging.exception(
                     "Não foi possível registrar o log do mute: guild=%s member=%s",
