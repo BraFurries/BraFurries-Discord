@@ -5830,36 +5830,76 @@ def warnMember(
     reason: str,
     applied_by: discord.Member,
 ):
-    with pooled_connection() as cursor:
+    try:
         user_id = includeUser(discord_user, guild_id)
         applied_by_id = includeUser(applied_by, guild_id)
-        query = f"""SELECT community_id FROM community_discord WHERE guild_id = '{guild_id}';"""
-        cursor.execute(query)
-        community_id = cursor.fetchone()["community_id"]
-        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        try:
-            query = f"""INSERT INTO user_warnings (user_id, community_id, date, reason, expired, applied_by)
-            VALUES ('{user_id}', '{community_id}', '{date}', '{reason}', FALSE, '{applied_by_id}');"""
-            cursor.execute(query)
-            query = f"""SELECT COUNT(*) AS warnings_count FROM user_warnings
-    WHERE user_id = '{user_id}'
-    AND community_id = '{community_id}';"""
-            cursor.execute(query)
-            warningsCount = cursor.fetchone()["warnings_count"]
-            #pegar o número de warnings necessários para banir o usuário
-            query = f"""SELECT warnings_limit FROM config_warnings_settings
-    WHERE community_id = '{community_id}';"""
-            cursor.execute(query)
-            warningsLimit = cursor.fetchone()["warnings_limit"]
-            return {'warningsCount': warningsCount, 'warningsLimit': warningsLimit}
-        except Exception as e:
-            # The SQL includes a moderation reason, so avoid exposing the
-            # exception/query text through the administrative log endpoint.
-            logger.error(
-                'Falha ao registrar advertência no banco (tipo=%s)',
-                type(e).__name__,
+
+        with pooled_connection() as cursor:
+            cursor.execute(
+                "SELECT community_id FROM community_discord WHERE guild_id = %s",
+                (guild_id,),
             )
-            return False
+            community_row = cursor.fetchone()
+            if not community_row:
+                raise LookupError(
+                    f"Comunidade do servidor {guild_id} não encontrada ao registrar warn"
+                )
+            community_id = community_row["community_id"]
+            warning_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            cursor.execute(
+                """
+                INSERT INTO user_warnings (
+                    user_id,
+                    community_id,
+                    date,
+                    reason,
+                    expired,
+                    applied_by
+                )
+                VALUES (%s, %s, %s, %s, FALSE, %s)
+                """,
+                (user_id, community_id, warning_date, reason, applied_by_id),
+            )
+            warning_id = int(cursor.lastrowid)
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS warnings_count
+                FROM user_warnings
+                WHERE user_id = %s
+                  AND community_id = %s
+                """,
+                (user_id, community_id),
+            )
+            warnings_row = cursor.fetchone()
+            warnings_count = int(warnings_row["warnings_count"])
+
+            cursor.execute(
+                """
+                SELECT warnings_limit
+                FROM config_warnings_settings
+                WHERE community_id = %s
+                """,
+                (community_id,),
+            )
+            limit_row = cursor.fetchone()
+            if not limit_row:
+                raise LookupError(
+                    f"Configuração de warns da comunidade {community_id} não encontrada"
+                )
+
+            return {
+                'warningId': warning_id,
+                'warningsCount': warnings_count,
+                'warningsLimit': int(limit_row["warnings_limit"]),
+            }
+    except Exception as error:
+        logger.error(
+            'Falha ao registrar advertência no banco (tipo=%s)',
+            type(error).__name__,
+        )
+        return False
 
 
 def registerUserBan(
