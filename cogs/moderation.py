@@ -2050,7 +2050,7 @@ class ModerationCog(commands.Cog):
     @app_commands.describe(
         membro='Membro que receberá o warn',
         motivo='Motivo do warn',
-        castigo='Mute opcional: 30m, 2h, 3d, 1w ou combinações como 1d12h',
+        castigo='Opcional: m=minutos, h=horas, d=dias, w=semanas (ex.: 1d12h; máx. 28d)',
         notificar='Enviar mensagem privada ao membro. Padrão: sim.',
     )
     async def warn(
@@ -2364,7 +2364,7 @@ class ModerationCog(commands.Cog):
     @app_commands.command(name='mute', description='Aplica um castigo temporário em um membro')
     @app_commands.describe(
         membro='Membro que receberá o castigo',
-        duracao='30m, 2h, 3d, 1w ou combinações como 1d12h. Máximo: 28 dias.',
+        duracao='m=minutos, h=horas, d=dias, w=semanas (ex.: 2h, 1d12h; máx. 28d)',
         motivo='Motivo do castigo',
         notificar='Enviar mensagem privada ao membro. Padrão: sim.',
     )
