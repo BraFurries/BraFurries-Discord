@@ -939,6 +939,17 @@ class ModerationCog(commands.Cog):
             await member.remove_roles(cargo_visitante)
 
 
+    @staticmethod
+    def _build_provisional_access_message(
+        duration_days: int, account_age_limit_days: int
+    ) -> str:
+        return (
+            f"Você recebeu **acesso provisório** por **{duration_days} dia(s)**. "
+            f"Nesta comunidade, contas com menos de **{account_age_limit_days} dia(s)** "
+            "de criação são consideradas recentes para a carteirinha provisória. "
+            "Após o período de acesso provisório, sua liberação completa ocorrerá automaticamente."
+        )
+
     async def _apply_provisional_temp_roles(
         self,
         interaction: Interaction,
@@ -947,6 +958,7 @@ class ModerationCog(commands.Cog):
         carteirinha_provisoria: discord.Role,
         cargo_visitante: discord.Role,
         duracao_dias: int,
+        account_age_limit_days: int,
         update_channel: bool = True,
     ) -> None:
         expiration_date = now() + timedelta(days=duracao_dias)
@@ -974,9 +986,8 @@ class ModerationCog(commands.Cog):
             )
         try:
             await member.send(
-                (
-                    f'Sua conta recebeu o **acesso provisório** por {duracao_dias} dia(s) por ter menos de 30 dias de criação. '
-                    'Após esse período, sua liberação completa ocorrerá automaticamente.'
+                self._build_provisional_access_message(
+                    duracao_dias, account_age_limit_days
                 )
             )
         except (discord.Forbidden, discord.HTTPException):
@@ -1085,6 +1096,15 @@ class ModerationCog(commands.Cog):
             return False
 
         if is_new_account and acesso_provisorio_ativo:
+            configured_account_age_days = int(
+                config.get("idade_minima_conta_acesso_provisorio_dias") or 30
+            )
+            account_age_limit_days = (
+                configured_account_age_days
+                if config.get("idade_minima_conta_acesso_provisorio_ativa")
+                and configured_account_age_days > 0
+                else 30
+            )
             await self._apply_provisional_temp_roles(
                 interaction,
                 member,
@@ -1092,6 +1112,7 @@ class ModerationCog(commands.Cog):
                 carteirinha_provisoria,
                 cargo_visitante,
                 acesso_provisorio_duracao_dias,
+                account_age_limit_days,
                 update_channel=update_channel,
             )
             await interaction.edit_original_response(
