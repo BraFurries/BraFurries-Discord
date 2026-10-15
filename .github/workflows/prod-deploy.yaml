@@ -1,5 +1,8 @@
 name: Deploy em Produção
 
+# Merges comuns na main acionam este workflow; nao usar marcadores de skip CI
+# em merges aprovados para publicacao automatica.
+
 on:
   workflow_dispatch:
   push:
