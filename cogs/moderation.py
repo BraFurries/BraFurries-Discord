@@ -940,6 +940,13 @@ class ModerationCog(commands.Cog):
 
 
     @staticmethod
+    def _get_provisional_account_age_limit_days(config: dict) -> int:
+        configured_days = int(config.get("idade_minima_conta_acesso_provisorio_dias") or 30)
+        if config.get("idade_minima_conta_acesso_provisorio_ativa") and configured_days > 0:
+            return configured_days
+        return 30
+
+    @staticmethod
     def _build_provisional_access_message(
         duration_days: int, account_age_limit_days: int
     ) -> str:
@@ -1096,15 +1103,7 @@ class ModerationCog(commands.Cog):
             return False
 
         if is_new_account and acesso_provisorio_ativo:
-            configured_account_age_days = int(
-                config.get("idade_minima_conta_acesso_provisorio_dias") or 30
-            )
-            account_age_limit_days = (
-                configured_account_age_days
-                if config.get("idade_minima_conta_acesso_provisorio_ativa")
-                and configured_account_age_days > 0
-                else 30
-            )
+            account_age_limit_days = self._get_provisional_account_age_limit_days(config)
             await self._apply_provisional_temp_roles(
                 interaction,
                 member,
