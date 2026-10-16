@@ -120,7 +120,6 @@ class HelpCog(commands.Cog):
             "• `/chat_resumir` — resumo de conversa recente de canal.\n"
             "• `/notas_add` — adiciona nota interna em membro.\n"
             "• `/warn` e `/ban` — ações disciplinares.\n"
-            "• `/portaria_aprovar` — aprovação manual de entrada.\n"
             "• `/registrar_usuario` — registra usuário e permite informar aprovação/aniversário.\n"
             "• Eventos permanecem disponíveis apenas para consulta pelo Coddy."
         ),
@@ -131,7 +130,6 @@ class HelpCog(commands.Cog):
             "• `/chat_analisar_membro`\n"
             "• `/chat_resumir`\n"
             "• `/notas_add`\n"
-            "• `/portaria_aprovar`\n"
             "• Comandos de moderação sensível (`/warn`, `/ban`) conforme regra de permissão local."
         ),
         "boas_praticas": (
