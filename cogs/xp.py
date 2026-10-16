@@ -21,7 +21,7 @@ from core.database import (
     async_includeUser,
     pooled_connection,
 )
-from core.levels import apply_xp_multipliers, level_from_total_xp, xp_to_reach_level
+from core.levels import apply_xp_multipliers, level_from_total_xp
 from core.xp_policy import XpPolicy
 from core.xp_reconciliation import reconcile_guild_levels_serialized
 
@@ -497,66 +497,6 @@ class XpCog(commands.Cog):
     async def before_voice_xp_tick(self):
         await self.bot.wait_until_ready()
 
-    @admin_xp.command(name="voice-inspect", description="Inspeciona auditoria e métricas de XP de voz por usuário")
-    @app_commands.describe(member="Membro para inspeção", dias="Janela em dias para métricas (1-30)")
-    async def admin_voice_inspect(self, ctx: discord.Interaction, member: discord.Member, dias: app_commands.Range[int, 1, 30] = 7):
-        if not await self._ensure_admin_permissions(ctx):
-            return
-        async with async_pooled_connection() as cursor:
-            await cursor.execute(
-                """
-                SELECT event_type, xp_amount, voice_channel_id, eligible_seconds, ineligible_seconds, created_at
-                FROM voice_xp_audit_log
-                WHERE server_guild_id = %s AND discord_user_id = %s
-                ORDER BY id DESC
-                LIMIT 10
-                """,
-                (ctx.guild.id, member.id),
-            )
-            latest = await cursor.fetchall() or []
-            await cursor.execute(
-                """
-                SELECT modality, SUM(total_xp) AS total_xp, SUM(grants_count) AS grants_count, SUM(blocks_count) AS blocks_count,
-                       SUM(eligible_seconds) AS eligible_seconds, SUM(ineligible_seconds) AS ineligible_seconds
-                FROM voice_xp_daily_metrics
-                WHERE server_guild_id = %s AND metric_day >= (UTC_DATE() - INTERVAL %s DAY)
-                GROUP BY modality
-                ORDER BY total_xp DESC
-                """,
-                (ctx.guild.id, int(dias)),
-            )
-            modality_rows = await cursor.fetchall() or []
-            await cursor.execute(
-                """
-                SELECT voice_channel_id, SUM(total_xp) AS total_xp
-                FROM voice_xp_daily_metrics
-                WHERE server_guild_id = %s AND metric_day >= (UTC_DATE() - INTERVAL %s DAY) AND modality = 'voice_xp_awarded' AND voice_channel_id IS NOT NULL
-                GROUP BY voice_channel_id
-                ORDER BY total_xp DESC
-                LIMIT 5
-                """,
-                (ctx.guild.id, int(dias)),
-            )
-            top_channels = await cursor.fetchall() or []
-        desc = []
-        if latest:
-            desc.append("**Últimos eventos:**")
-            for row in latest:
-                desc.append(f"- `{row['created_at']}` • `{row['event_type']}` • XP `{int(row.get('xp_amount') or 0)}` • canal `{row.get('voice_channel_id')}`")
-        if modality_rows:
-            desc.append("\n**Métricas agregadas (guild/dia):**")
-            for row in modality_rows:
-                elig = int(row.get("eligible_seconds") or 0)
-                inelig = int(row.get("ineligible_seconds") or 0)
-                block_rate = (int(row.get("blocks_count") or 0) / max(1, int(row.get("grants_count") or 0) + int(row.get("blocks_count") or 0))) * 100
-                desc.append(f"- `{row['modality']}`: XP `{int(row.get('total_xp') or 0)}` • bloqueio `{block_rate:.1f}%` • min elegíveis `{elig//60}` vs não elegíveis `{inelig//60}`")
-        if top_channels:
-            desc.append("\n**Top canais por XP:**")
-            for row in top_channels:
-                desc.append(f"- Canal `{row.get('voice_channel_id')}`: XP `{int(row.get('total_xp') or 0)}`")
-        embed = discord.Embed(title=f"Auditoria de XP de voz — {member.display_name}", description="\n".join(desc)[:4000], color=discord.Color.teal())
-        await ctx.response.send_message(embed=embed, ephemeral=True)
-
     @staticmethod
     def _is_guild_admin(member: discord.abc.User | discord.Member) -> bool:
         return isinstance(member, discord.Member) and (
@@ -893,48 +833,6 @@ class XpCog(commands.Cog):
         except Exception:
             await ctx.response.send_message(
                 "Não consegui processar a configuração de níveis agora. Tente novamente em instantes.",
-                ephemeral=True,
-            )
-
-    @admin_xp.command(name="simular", description="Simula XP necessário para alcançar um nível (kL^p + bL)")
-    @app_commands.rename(level="nivel", base_xp="xp_base", combo_count="combo")
-    @app_commands.describe(
-        level="Nível alvo da simulação",
-        base_xp="XP base para cálculo com multiplicadores (opcional)",
-        combo_count="Quantidade de combo diário para simulação (opcional)",
-    )
-    @app_commands.default_permissions(manage_guild=True)
-    async def simulate_level_progression(
-        self,
-        ctx: discord.Interaction,
-        level: app_commands.Range[int, 1, 100000],
-        base_xp: app_commands.Range[int, 0, 100000] = 0,
-        combo_count: app_commands.Range[int, 0, 365] = 0,
-    ):
-        if not await self._ensure_admin_permissions(ctx):
-            return
-
-        assert ctx.guild is not None
-
-        try:
-            config = await async_get_level_config(ctx.guild.id)
-            required_xp = xp_to_reach_level(level, config)
-            adjusted_xp = apply_xp_multipliers(base_xp, config, combo_count=combo_count)
-
-            embed = discord.Embed(
-                title="🧪 Simulação de progressão",
-                color=discord.Color.green(),
-            )
-            embed.add_field(name="Nível alvo", value=f"`{level}`", inline=True)
-            embed.add_field(name="XP necessário", value=f"`{required_xp}`", inline=True)
-            embed.add_field(name="XP base informado", value=f"`{base_xp}`", inline=True)
-            embed.add_field(name="XP com multiplicadores", value=f"`{adjusted_xp}`", inline=True)
-            embed.add_field(name="Combo informado", value=f"`{combo_count}`", inline=True)
-
-            await ctx.response.send_message(embed=embed, ephemeral=True)
-        except Exception:
-            await ctx.response.send_message(
-                "Não foi possível executar a simulação agora. Tente novamente em instantes.",
                 ephemeral=True,
             )
 
