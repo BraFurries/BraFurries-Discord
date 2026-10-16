@@ -161,8 +161,7 @@ A partial Discord member view is never submitted as complete and therefore canno
 - `/daily` — resgata recompensa diária.
 - `/admin-xp ajustar` **(staff)** — ajusta XP de membros manualmente.
 - `/admin-xp config` **(staff)** — configura regras/sistema de XP.
-- `/admin-xp simular` **(staff)** — simula ganhos de XP para validação.
-- `/admin-xp voice-inspect` **(staff)** — inspeciona contagem de XP por atividade em voz.
+- A simulação da curva de progressão XP é feita no painel Web do Coddy.
 - `/rp banho` — ação de roleplay temática.
 - `/rp trabalhar` — ação de roleplay para ganho/progressão.
 - `/rp duelo` — inicia duelo de roleplay.
@@ -200,8 +199,7 @@ A partial Discord member view is never submitted as complete and therefore canno
 - `/warn` **(staff)** — aplica advertência disciplinar a membro.
 - `/ban` **(staff)** — bane membro do servidor.
 - `/notas_add` **(staff)** — adiciona nota interna de moderação em usuário.
-- `/portaria_aprovar` **(staff)** — aprova entrada de membro na portaria.
-- `/portaria_liberar_conta` **(staff)** — libera conta travada na portaria.
+- Aprovação de fichas: use os botões do fluxo atual da Portaria; bypasses de contas são gerenciados no painel Web.
 - `/chat_analisar_membro` **(staff)** — analisa histórico de mensagens de um membro.
 - `/chat_resumir` **(staff)** — gera resumo de conversa/canal para suporte da moderação.
 
@@ -228,14 +226,13 @@ A partial Discord member view is never submitted as complete and therefore canno
 - `/formulario publicar` **(staff)** — publica formulário para coleta de respostas.
 - `/formulario criar` **(staff)** — cria novo formulário.
 - `/formulario listar` **(staff)** — lista formulários cadastrados.
-- `/formulario configurar_portaria` **(staff)** — vincula e configura formulário da portaria.
+- A configuração de canais, resultados e feedback da Portaria é administrada no painel Web.
 - `/formulario editar` **(staff)** — edita formulário existente.
 - `/formulario auditar_ficha_portaria` **(staff)** — audita fichas/respostas da portaria.
 
 ### Backup, migração e recuperação
-- `/backup gerar` **(staff)** — gera snapshot de backup dos dados suportados.
-- `/backup listar` **(staff)** — lista backups disponíveis.
-- `/backup sincronizar` **(staff)** — sincroniza backups entre origens/destinos configurados.
+- `/backup listar` **(staff)** — lista backups disponíveis e indica o painel Web para geração e periodicidade.
+- Geração manual, configuração de backups automáticos e restauração estrutural são iniciadas no painel Web do Coddy.
 - `/migrate permissoes canais` **(staff)** — migra permissões de canais para padrão atual.
 - `/importar warns` **(staff)** — importa advertências de base legada.
 - `/recover cargos` **(staff)** — recupera cargos de membros após incidentes/migração.
