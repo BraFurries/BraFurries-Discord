@@ -92,9 +92,19 @@ def test_unique_column_order_is_not_interchangeable(table):
     assert_only_readonly_metadata(cursor)
 
 
-def test_all_unique_keys_scope_critical_mutations_by_guild():
-    for table, fields in REQUIRED_UNIQUE_KEYS.items():
-        assert "server_guild_id" in fields, table
+def test_guild_scoped_configuration_unique_keys_and_minigame_primary_key():
+    # Configuration identities must not alias guilds. The append-only score
+    # events intentionally have only the surrogate id PK in production.
+    for table in (
+        "user_economy",
+        "bot_sensitive_permission_whitelist",
+        "config_levels",
+        "active_call_logs",
+        "allowed_feature_channels",
+    ):
+        assert "server_guild_id" in REQUIRED_UNIQUE_KEYS[table], table
+    assert REQUIRED_UNIQUE_KEYS["minigame_scores"] == ("id",)
+    assert "server_guild_id" in REQUIRED_COLUMNS["minigame_scores"]
 
 
 def test_unrecognized_table_cannot_be_injected_into_metadata_preflight():
