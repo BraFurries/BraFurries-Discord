@@ -45,3 +45,47 @@ def check_startup_schema_table(cursor, table: str) -> None:
         error_prefix="coddy_startup_schema",
         guidance="check BraFurries-Database migrations and production schema before loading Coddy",
     )
+
+# Production form schema intentionally keeps nullable form_flows.server_guild_id
+# for legacy records. Do not silently enforce NOT NULL or re-scope old flows.
+FORM_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
+    "form_flows": frozenset({
+        "id", "name", "type", "server_guild_id", "target_channel_id",
+        "approved_target_channel_id", "rejected_target_channel_id",
+        "rejection_feedback_enabled", "created_at",
+    }),
+    "form_questions": frozenset({
+        "id", "flow_id", "question_text", "placeholder_text", "position", "required",
+    }),
+    "form_submissions": frozenset({
+        "id", "flow_id", "user_id", "guild_id", "channel_id", "message_id",
+        "status", "created_at",
+    }),
+    "form_decisions": frozenset({
+        "id", "submission_id", "decision", "decided_by", "decided_at",
+    }),
+    "form_published_messages": frozenset({
+        "id", "flow_id", "message_id", "channel_id", "guild_id", "created_at",
+    }),
+}
+
+# Do not invent per-guild uniqueness for the legacy form tables.
+# Questions and decisions are tenant-scoped through their parent flow/submission.
+FORM_REQUIRED_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
+    "form_flows": ("id",),
+    "form_questions": ("id",),
+    "form_submissions": ("id",),
+    "form_decisions": ("id",),
+    "form_published_messages": ("message_id",),
+}
+
+
+def check_form_schema(cursor) -> None:
+    """Read-only verification of the existing forms schema; no auto-migration."""
+    check_schema_readonly(
+        cursor,
+        required_columns=FORM_REQUIRED_COLUMNS,
+        required_unique_keys=FORM_REQUIRED_UNIQUE_KEYS,
+        error_prefix="coddy_form_schema",
+        guidance="review BraFurries-Database migrations and legacy form data",
+    )

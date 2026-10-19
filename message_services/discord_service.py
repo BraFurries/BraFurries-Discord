@@ -1368,6 +1368,7 @@ def run_discord_client(chatBot):
 
     # Schema verification belongs to actual process startup, never module import.
     # These checks are read-only and fail closed before connecting to Discord.
+    initialize_form_tables()
     initialize_user_economy_table()
     initialize_bot_sensitive_permission_whitelist_table()
     initialize_config_levels_table()

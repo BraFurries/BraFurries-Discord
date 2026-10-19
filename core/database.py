@@ -34,7 +34,7 @@ from core.runtime_config import (
 )
 from core.temp_role_locks import temp_role_lock
 from core.xp_schema import check_voice_xp_schema
-from core.runtime_schema import check_startup_schema_table
+from core.runtime_schema import check_startup_schema_table, check_form_schema
 
 logger = logging.getLogger(__name__)
 
@@ -374,129 +374,9 @@ def initialize_expedition_tables() -> None:
         logging.error("Failed to initialize expedition tables: %s", err)
 
 def initialize_form_tables() -> None:
-    """Ensure the form flow tables exist with the expected schema."""
-
-    create_form_flows_statement = """
-    CREATE TABLE IF NOT EXISTS form_flows (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        server_guild_id BIGINT NOT NULL,
-        name VARCHAR(255) NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        target_channel_id BIGINT NOT NULL,
-        approved_target_channel_id BIGINT NULL,
-        rejected_target_channel_id BIGINT NULL,
-        rejection_feedback_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_form_flows_type (type),
-        INDEX idx_form_flows_server_guild_id (server_guild_id),
-        INDEX idx_form_flows_server_name (server_guild_id, name),
-        INDEX idx_form_flows_server_type (server_guild_id, type),
-        INDEX idx_form_flows_target_channel (target_channel_id),
-        INDEX idx_form_flows_approved_target_channel (approved_target_channel_id),
-        INDEX idx_form_flows_rejected_target_channel (rejected_target_channel_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    create_form_questions_statement = """
-    CREATE TABLE IF NOT EXISTS form_questions (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        flow_id INT NOT NULL,
-        question_text TEXT NOT NULL,
-        placeholder_text VARCHAR(100) NULL,
-        position INT NOT NULL,
-        required BOOLEAN NOT NULL DEFAULT FALSE,
-        INDEX idx_form_questions_flow (flow_id),
-        INDEX idx_form_questions_position (position),
-        CONSTRAINT fk_form_questions_flow
-            FOREIGN KEY (flow_id) REFERENCES form_flows(id)
-            ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    create_form_submissions_statement = """
-    CREATE TABLE IF NOT EXISTS form_submissions (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        flow_id INT NOT NULL,
-        user_id BIGINT NOT NULL,
-        guild_id BIGINT NOT NULL,
-        channel_id BIGINT NOT NULL,
-        message_id BIGINT NULL,
-        status VARCHAR(20) NOT NULL DEFAULT 'pending',
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_form_submissions_flow (flow_id),
-        INDEX idx_form_submissions_status (status),
-        INDEX idx_form_submissions_message (message_id),
-        CONSTRAINT fk_form_submissions_flow
-            FOREIGN KEY (flow_id) REFERENCES form_flows(id)
-            ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    create_form_decisions_statement = """
-    CREATE TABLE IF NOT EXISTS form_decisions (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        submission_id INT NOT NULL,
-        decision VARCHAR(20) NOT NULL,
-        decided_by BIGINT NOT NULL,
-        decided_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_form_decisions_submission (submission_id),
-        INDEX idx_form_decisions_decision (decision),
-        CONSTRAINT fk_form_decisions_submission
-            FOREIGN KEY (submission_id) REFERENCES form_submissions(id)
-            ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    create_form_published_messages_statement = """
-    CREATE TABLE IF NOT EXISTS form_published_messages (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        flow_id INT NOT NULL,
-        message_id BIGINT NOT NULL,
-        channel_id BIGINT NOT NULL,
-        guild_id BIGINT NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY uniq_form_published_message (message_id),
-        INDEX idx_form_published_flow (flow_id),
-        CONSTRAINT fk_form_published_flow
-            FOREIGN KEY (flow_id) REFERENCES form_flows(id)
-            ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute(create_form_flows_statement)
-            cursor.execute("SHOW COLUMNS FROM form_flows LIKE 'approved_target_channel_id'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE form_flows "
-                    "ADD COLUMN approved_target_channel_id BIGINT NULL AFTER target_channel_id"
-                )
-            cursor.execute("SHOW COLUMNS FROM form_flows LIKE 'rejected_target_channel_id'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE form_flows "
-                    "ADD COLUMN rejected_target_channel_id BIGINT NULL AFTER approved_target_channel_id"
-                )
-            cursor.execute("SHOW COLUMNS FROM form_flows LIKE 'rejection_feedback_enabled'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE form_flows "
-                    "ADD COLUMN rejection_feedback_enabled BOOLEAN NOT NULL DEFAULT FALSE "
-                    "AFTER rejected_target_channel_id"
-                )
-            cursor.execute(create_form_questions_statement)
-            cursor.execute("SHOW COLUMNS FROM form_questions LIKE 'placeholder_text'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE form_questions "
-                    "ADD COLUMN placeholder_text VARCHAR(100) NULL AFTER question_text"
-                )
-            cursor.execute(create_form_submissions_statement)
-            cursor.execute(create_form_decisions_statement)
-            cursor.execute(create_form_published_messages_statement)
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize form flow tables: %s", err)
+    """Validate Flyway-owned form tables without mutating schema."""
+    with pooled_connection() as cursor:
+        check_form_schema(cursor)
 
 
 def initialize_active_call_logs_table() -> None:
@@ -1136,7 +1016,6 @@ def is_user_sensitive_permission_whitelisted(guild_id: int, user_id: int, permis
     return is_sensitive_permission_whitelisted(guild_id, user_id, 'user', permission_name)
 
 
-initialize_form_tables()
 initialize_active_call_logs_table()
 initialize_portaria_base_config_table()
 initialize_user_community_status_invite_columns()
