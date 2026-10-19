@@ -34,7 +34,7 @@ from core.runtime_config import (
 )
 from core.temp_role_locks import temp_role_lock
 from core.xp_schema import check_voice_xp_schema
-from core.runtime_schema import check_startup_schema_table, check_form_schema
+from core.runtime_schema import check_startup_schema_table, check_form_schema, check_inventory_schema
 
 logger = logging.getLogger(__name__)
 
@@ -844,50 +844,14 @@ def _serialize_service_metadata(metadata: Optional[dict]) -> Optional[str]:
 
 
 def _ensure_user_inventory_schema(cursor: MySQLCursorAbstract) -> None:
-    """Garantir que a tabela ``user_inventory`` possui as colunas esperadas."""
+    """Verify the existing community-scoped inventory schema without mutating it."""
 
     global _USER_INVENTORY_SCHEMA_VALIDATED
 
     if _USER_INVENTORY_SCHEMA_VALIDATED:
         return
 
-    required_columns = {
-        "store_item_id": False,
-        "used_in": False,
-        "valid_until": False,
-        "service_metadata": False,
-    }
-
-    for column in required_columns:
-        cursor.execute(
-            "SHOW COLUMNS FROM user_inventory LIKE %s",
-            (column,),
-        )
-        required_columns[column] = cursor.fetchone() is not None
-
-    if not required_columns["service_metadata"]:
-        try:
-            cursor.execute(
-                "ALTER TABLE user_inventory ADD COLUMN service_metadata JSON NULL"
-            )
-        except (ProgrammingError, DatabaseError) as error:
-            logging.warning(
-                "Falha ao adicionar coluna JSON para metadados de serviços no inventário: %s. "
-                "Aplicando solução alternativa utilizando LONGTEXT.",
-                error,
-            )
-            cursor.execute(
-                "ALTER TABLE user_inventory ADD COLUMN service_metadata LONGTEXT NULL"
-            )
-        required_columns["service_metadata"] = True
-
-    if not all(required_columns.values()):
-        missing = [column for column, exists in required_columns.items() if not exists]
-        raise ValueError(
-            "A tabela user_inventory precisa possuir as colunas 'store_item_id', 'used_in', 'valid_until' e 'service_metadata' para registrar serviços da loja. Faltando: "
-            + ", ".join(missing)
-        )
-
+    check_inventory_schema(cursor)
     _USER_INVENTORY_SCHEMA_VALIDATED = True
 
 
