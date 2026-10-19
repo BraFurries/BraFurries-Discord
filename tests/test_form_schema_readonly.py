@@ -63,7 +63,7 @@ def test_production_form_snapshot_contract_is_accepted_read_only():
 @pytest.mark.parametrize("table", sorted(FORM_REQUIRED_COLUMNS))
 def test_missing_form_table_fails_before_index_check(table):
     cursor = FormMetadataCursor(missing_table=table)
-    with pytest.raises(RuntimeError, match=rf"{table}\\."):
+    with pytest.raises(RuntimeError, match=rf"{table}\."):
         check_form_schema(cursor)
     assert len(cursor.queries) == 1
 
@@ -72,7 +72,7 @@ def test_missing_form_table_fails_before_index_check(table):
 def test_missing_form_column_fails_closed(table):
     missing = sorted(FORM_REQUIRED_COLUMNS[table])[0]
     cursor = FormMetadataCursor(missing_column=(table, missing))
-    with pytest.raises(RuntimeError, match=rf"{table}\\.{missing}"):
+    with pytest.raises(RuntimeError, match=rf"{table}\.{missing}"):
         check_form_schema(cursor)
     assert len(cursor.queries) == 1
 
