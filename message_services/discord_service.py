@@ -1366,4 +1366,10 @@ def run_discord_client(chatBot):
             "DISCORD_TOKEN não encontrado. Defina a variável no ambiente ou no arquivo .env antes de iniciar o bot."
         )
 
+    # Schema verification belongs to actual process startup, never module import.
+    # These checks are read-only and fail closed before connecting to Discord.
+    initialize_user_economy_table()
+    initialize_bot_sensitive_permission_whitelist_table()
+    initialize_config_levels_table()
+
     asyncio.run(run_discord_bot(bot, token))
