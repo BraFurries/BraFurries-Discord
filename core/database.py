@@ -34,6 +34,7 @@ from core.runtime_config import (
 )
 from core.temp_role_locks import temp_role_lock
 from core.xp_schema import check_voice_xp_schema
+from core.runtime_schema import check_startup_schema_table
 
 logger = logging.getLogger(__name__)
 
@@ -285,69 +286,9 @@ def _ensure_economy_entry(
 
 
 def initialize_user_economy_table() -> None:
-    """Ensure the ``user_economy`` table exists with the expected schema."""
-
-    create_table_statement = """
-    CREATE TABLE IF NOT EXISTS user_economy (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        server_guild_id BIGINT NOT NULL,
-        bank_balance BIGINT NOT NULL DEFAULT 0,
-        UNIQUE KEY uq_user_economy_user_server (user_id, server_guild_id),
-        INDEX idx_user_economy_user (user_id),
-        CONSTRAINT fk_user_economy_user FOREIGN KEY (user_id) REFERENCES users(id)
-            ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute(create_table_statement)
-
-            cursor.execute("SHOW INDEX FROM user_economy")
-            indexes = cursor.fetchall() or []
-
-            index_columns: dict[str, list[str]] = {}
-            index_unique: dict[str, bool] = {}
-
-            for index in indexes:
-                index_name = str(index.get("Key_name") or "")
-                if not index_name:
-                    continue
-                index_columns.setdefault(index_name, []).append(str(index.get("Column_name") or ""))
-                index_unique[index_name] = bool((index.get("Non_unique") or 0) == 0)
-
-            has_expected_unique_index = False
-            for index_name, columns in list(index_columns.items()):
-                if index_unique.get(index_name) and columns == ["user_id", "server_guild_id"]:
-                    has_expected_unique_index = True
-                    continue
-
-                if index_unique.get(index_name) and columns == ["user_id"]:
-                    has_non_unique_user_id_index = any(
-                        (not index_unique.get(existing_index_name))
-                        and existing_columns == ["user_id"]
-                        for existing_index_name, existing_columns in index_columns.items()
-                    )
-                    if not has_non_unique_user_id_index:
-                        cursor.execute(
-                            "ALTER TABLE user_economy "
-                            "ADD INDEX idx_user_economy_user_fk_support (user_id)"
-                        )
-                        index_columns["idx_user_economy_user_fk_support"] = ["user_id"]
-                        index_unique["idx_user_economy_user_fk_support"] = False
-                    safe_index_name = index_name.replace("`", "``")
-                    cursor.execute(f"ALTER TABLE user_economy DROP INDEX `{safe_index_name}`")
-
-            if not has_expected_unique_index:
-                cursor.execute(
-                    "ALTER TABLE user_economy "
-                    "ADD UNIQUE KEY uq_user_economy_user_server (user_id, server_guild_id)"
-                )
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize user_economy table: %s", err)
-
-
+    """Read-only preflight for guild-scoped economy; schema changes belong to Database."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "user_economy")
 
 
 def initialize_boss_event_tables() -> None:
@@ -707,45 +648,9 @@ def initialize_portaria_account_release_table() -> None:
         logging.error("Failed to validate legacy portaria_account_release schema: %s", err)
 
 def initialize_bot_sensitive_permission_whitelist_table() -> None:
-    """Store allowed sensitive permissions for specific members (bots/users) per guild."""
-
-    create_table_statement = """
-    CREATE TABLE IF NOT EXISTS bot_sensitive_permission_whitelist (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        server_guild_id BIGINT NOT NULL,
-        actor_id BIGINT NOT NULL,
-        actor_type VARCHAR(10) NOT NULL DEFAULT 'bot',
-        permission_name VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY uq_bot_sensitive_permission_whitelist (server_guild_id, actor_id, actor_type, permission_name),
-        INDEX idx_bot_sensitive_permission_whitelist_lookup (server_guild_id, actor_id, actor_type)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute(create_table_statement)
-            cursor.execute("SHOW COLUMNS FROM bot_sensitive_permission_whitelist LIKE 'actor_type'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE bot_sensitive_permission_whitelist "
-                    "ADD COLUMN actor_type VARCHAR(10) NOT NULL DEFAULT 'bot' AFTER actor_id"
-                )
-
-            cursor.execute(
-                "SHOW INDEX FROM bot_sensitive_permission_whitelist "
-                "WHERE Key_name = 'uq_bot_sensitive_permission_whitelist'"
-            )
-            unique_rows = cursor.fetchall() or []
-            if unique_rows and len(unique_rows) != 4:
-                cursor.execute("ALTER TABLE bot_sensitive_permission_whitelist DROP INDEX uq_bot_sensitive_permission_whitelist")
-                cursor.execute(
-                    "ALTER TABLE bot_sensitive_permission_whitelist "
-                    "ADD UNIQUE KEY uq_bot_sensitive_permission_whitelist "
-                    "(server_guild_id, actor_id, actor_type, permission_name)"
-                )
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize bot_sensitive_permission_whitelist table: %s", err)
+    """Read-only preflight for guild-scoped sensitive permission whitelist; schema changes belong to Database."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "bot_sensitive_permission_whitelist")
 
 
 def initialize_discord_backup_tables() -> None:
@@ -929,68 +834,9 @@ def initialize_discord_theme_tables() -> None:
 
 
 def initialize_config_levels_table() -> None:
-    """Ensure ``config_levels`` exists with unique guild rows and defaults."""
-
-    create_table_statement = """
-    CREATE TABLE IF NOT EXISTS config_levels (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        server_guild_id BIGINT NOT NULL,
-        clear_on_exit TINYINT(1) NOT NULL DEFAULT 0,
-        levelup_warning TINYINT(1) NOT NULL DEFAULT 0,
-        levelup_warning_channel BIGINT NULL,
-        level_up_message TEXT NULL,
-        multiplier DECIMAL(20,3) NULL DEFAULT NULL,
-        phase1_k DECIMAL(20,3) NOT NULL DEFAULT 45.000,
-        phase1_p DECIMAL(20,3) NOT NULL DEFAULT 2.000,
-        phase1_b DECIMAL(20,3) NOT NULL DEFAULT 0.000,
-        daily_combo INT NULL DEFAULT NULL,
-        combo_multiplier DECIMAL(20,3) NULL DEFAULT NULL,
-        xp_base_per_min INT NOT NULL DEFAULT 2,
-        voice_social_bonus_pct DECIMAL(8,4) NOT NULL DEFAULT 0.0000,
-        voice_social_bonus_min_humans INT NOT NULL DEFAULT 2,
-        voice_diminishing_window1_minutes INT NOT NULL DEFAULT 60,
-        voice_diminishing_window2_minutes INT NOT NULL DEFAULT 120,
-        voice_diminishing_factor2 DECIMAL(8,4) NOT NULL DEFAULT 0.6000,
-        voice_diminishing_factor3 DECIMAL(8,4) NOT NULL DEFAULT 0.3000,
-        voice_daily_cap_xp INT NOT NULL DEFAULT 600,
-        text_daily_cap_xp INT NOT NULL DEFAULT 300,
-        global_daily_cap_xp INT NOT NULL DEFAULT 900,
-        UNIQUE KEY uq_config_levels_server_guild (server_guild_id),
-        INDEX idx_config_levels_server_guild (server_guild_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute(create_table_statement)
-            cursor.execute("SHOW COLUMNS FROM config_levels LIKE 'levelup_warning'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE config_levels "
-                    "ADD COLUMN levelup_warning TINYINT(1) NOT NULL DEFAULT 0 AFTER clear_on_exit"
-                )
-            for legacy_column in ("pivot_level", "phase2_c"):
-                cursor.execute(f"SHOW COLUMNS FROM config_levels LIKE '{legacy_column}'")
-                if cursor.fetchone() is not None:
-                    cursor.execute(f"ALTER TABLE config_levels DROP COLUMN {legacy_column}")
-            missing_columns = [
-                ("xp_base_per_min", "INT NOT NULL DEFAULT 2"),
-                ("voice_social_bonus_pct", "DECIMAL(8,4) NOT NULL DEFAULT 0.0000"),
-                ("voice_social_bonus_min_humans", "INT NOT NULL DEFAULT 2"),
-                ("voice_diminishing_window1_minutes", "INT NOT NULL DEFAULT 60"),
-                ("voice_diminishing_window2_minutes", "INT NOT NULL DEFAULT 120"),
-                ("voice_diminishing_factor2", "DECIMAL(8,4) NOT NULL DEFAULT 0.6000"),
-                ("voice_diminishing_factor3", "DECIMAL(8,4) NOT NULL DEFAULT 0.3000"),
-                ("voice_daily_cap_xp", "INT NOT NULL DEFAULT 600"),
-                ("text_daily_cap_xp", "INT NOT NULL DEFAULT 300"),
-                ("global_daily_cap_xp", "INT NOT NULL DEFAULT 900"),
-            ]
-            for column_name, definition in missing_columns:
-                cursor.execute(f"SHOW COLUMNS FROM config_levels LIKE '{column_name}'")
-                if cursor.fetchone() is None:
-                    cursor.execute(f"ALTER TABLE config_levels ADD COLUMN {column_name} {definition}")
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize config_levels table: %s", err)
+    """Read-only preflight for guild-scoped XP settings; schema changes belong to Database."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "config_levels")
 
 
 def initialize_minigame_scores_table() -> None:
