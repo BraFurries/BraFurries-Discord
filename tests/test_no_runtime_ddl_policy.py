@@ -78,7 +78,7 @@ def test_ddl_classification(statement, expected):
 def test_split_string_and_fstring_schema_mutations_are_detected():
     assert _ddl_literals('q = "ALTER " + "TABLE x ADD COLUMN y INT"')
     assert _ddl_literals('q = f"CREATE TABLE {table_name} (id INT)"')
-    assert _ddl_literals('q = "DROP " + action + " TABLE users"') == []  # unknown dynamic text
+    assert _ddl_literals('q = "DROP " + action + " TABLE users"')  # conservative fragments
 
 
 def test_runtime_contains_no_literal_schema_mutations():
