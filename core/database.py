@@ -33,6 +33,7 @@ from core.runtime_config import (
     get_database_name,
 )
 from core.temp_role_locks import temp_role_lock
+from core.xp_schema import check_voice_xp_schema
 
 logger = logging.getLogger(__name__)
 
@@ -2154,36 +2155,10 @@ def deleteActiveCallLog(guild_id: int, channel_id: int) -> bool:
             return False
 
 
-def _ensure_voice_sessions_table() -> None:
-    global _VOICE_SESSIONS_TABLE_READY
-    with _VOICE_SESSIONS_TABLE_LOCK:
-        if _VOICE_SESSIONS_TABLE_READY:
-            return
-        with pooled_connection() as cursor:
-            try:
-                cursor.execute("RENAME TABLE voice_xp_sessions TO voice_sessions")
-            except mysql.connector.Error:
-                pass
-
-        with pooled_connection() as cursor:
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS voice_sessions (
-                    server_guild_id BIGINT NOT NULL,
-                    discord_user_id BIGINT NOT NULL,
-                    voice_channel_id BIGINT NOT NULL,
-                    started_at DATETIME NOT NULL,
-                    last_tick_at DATETIME NOT NULL,
-                    is_eligible TINYINT(1) NOT NULL DEFAULT 0,
-                    is_self_muted TINYINT(1) NOT NULL DEFAULT 0,
-                    is_self_deafened TINYINT(1) NOT NULL DEFAULT 0,
-                    is_server_muted TINYINT(1) NOT NULL DEFAULT 0,
-                    is_server_deafened TINYINT(1) NOT NULL DEFAULT 0,
-                    PRIMARY KEY (server_guild_id, discord_user_id)
-                )
-                """
-            )
-        _VOICE_SESSIONS_TABLE_READY = True
+def validate_voice_xp_schema() -> None:
+    """Verify Flyway-owned XP tables using only information_schema reads."""
+    with pooled_connection() as cursor:
+        check_voice_xp_schema(cursor)
 
 
 def upsertVoiceSession(session: dict[str, Any]) -> bool:
@@ -2257,8 +2232,6 @@ def deleteVoiceSession(guild_id: int, user_id: int) -> bool:
 _LEVEL_CONFIG_CACHE: dict[int, tuple[float, dict]] = {}
 _LEVEL_CONFIG_CACHE_LOCK = RLock()
 _LEVEL_CONFIG_CACHE_TTL_SECONDS = 300.0
-_VOICE_SESSIONS_TABLE_READY = False
-_VOICE_SESSIONS_TABLE_LOCK = RLock()
 
 _DEFAULT_LEVEL_CONFIG: dict[str, Any] = {
     "guildId": 0,
