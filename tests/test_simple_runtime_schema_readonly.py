@@ -143,7 +143,11 @@ def test_three_initializers_are_readonly_and_only_called_on_real_startup():
         if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
         and isinstance(n.value.func, ast.Name)
     ]
-    assert calls[-7:-4] == list(expected)
+    assert calls[-9:-6] == list(expected)
+    assert calls[-6:-4] == [
+        "initialize_boss_event_tables",
+        "initialize_expedition_tables",
+    ]
     assert calls[-4:] == [
         "initialize_form_tables",
         "initialize_user_economy_table",

@@ -292,86 +292,21 @@ def initialize_user_economy_table() -> None:
 
 
 def initialize_boss_event_tables() -> None:
-    """Ensure community boss event tables exist."""
-
-    statements = [
-        """
-        CREATE TABLE IF NOT EXISTS community_boss_event (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            guild_id BIGINT NOT NULL,
-            boss_name VARCHAR(120) NOT NULL DEFAULT 'Boss',
-            max_hp INT NOT NULL,
-            current_hp INT NOT NULL,
-            active TINYINT(1) NOT NULL DEFAULT 1,
-            attack_cooldown_seconds INT NOT NULL DEFAULT 30,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            finished_at TIMESTAMP NULL,
-            UNIQUE KEY uq_community_boss_guild (guild_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS community_boss_contribution (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            guild_id BIGINT NOT NULL,
-            user_id INT NOT NULL,
-            total_damage BIGINT NOT NULL DEFAULT 0,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_community_boss_contribution (guild_id, user_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS community_boss_attack_cooldown (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            guild_id BIGINT NOT NULL,
-            user_id INT NOT NULL,
-            cooldown_until BIGINT NOT NULL DEFAULT 0,
-            UNIQUE KEY uq_community_boss_cooldown (guild_id, user_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        """,
-    ]
-
-    try:
-        with pooled_connection() as cursor:
-            for stmt in statements:
-                cursor.execute(stmt)
-            cursor.execute(
-                """
-                SELECT 1
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_SCHEMA = DATABASE()
-                  AND TABLE_NAME = 'community_boss_event'
-                  AND COLUMN_NAME = 'boss_name'
-                LIMIT 1
-                """
-            )
-            if not cursor.fetchone():
-                cursor.execute(
-                    "ALTER TABLE community_boss_event ADD COLUMN boss_name VARCHAR(120) NOT NULL DEFAULT 'Boss' AFTER guild_id"
-                )
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize boss event tables: %s", err)
+    """Read-only preflight for all community boss tables; no runtime DDL."""
+    with pooled_connection() as cursor:
+        for table in (
+            "community_boss_event",
+            "community_boss_contribution",
+            "community_boss_attack_cooldown",
+        ):
+            check_startup_schema_table(cursor, table)
 
 
 def initialize_expedition_tables() -> None:
-    """Ensure cooperative expedition tables exist."""
+    """Read-only preflight for cooperative expedition schema; no runtime DDL."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "community_expedition")
 
-    statement = """
-    CREATE TABLE IF NOT EXISTS community_expedition (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        guild_id BIGINT NOT NULL,
-        active TINYINT(1) NOT NULL DEFAULT 1,
-        started_at BIGINT NOT NULL,
-        ends_at BIGINT NOT NULL,
-        participants_json LONGTEXT NOT NULL,
-        finalized_at BIGINT NULL,
-        UNIQUE KEY uq_community_expedition_guild (guild_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute(statement)
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize expedition tables: %s", err)
 
 def initialize_form_tables() -> None:
     """Validate Flyway-owned form tables without mutating schema."""
@@ -969,8 +904,6 @@ initialize_portaria_base_config_table()
 initialize_user_community_status_invite_columns()
 initialize_portaria_account_release_table()
 initialize_portaria_bypasses_table()
-initialize_boss_event_tables()
-initialize_expedition_tables()
 initialize_community_discord_columns()
 initialize_user_bans_registered_at_column()
 initialize_user_level_voice_xp_columns()
