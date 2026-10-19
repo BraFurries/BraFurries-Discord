@@ -5997,74 +5997,23 @@ def _ensure_staff_roles_column(cursor) -> bool:
     return exists
 
 def _ensure_auto_join_roles_columns(cursor) -> bool:
-    """Ensure auto-join role columns exist in ``config_server_settings``."""
-
-    required_columns = {
-        "auto_join_roles_enabled": "TINYINT(1) NOT NULL DEFAULT 0",
-        "auto_join_role_ids": "TEXT NULL",
-    }
-
-    for column_name, column_definition in required_columns.items():
-        cursor.execute(
-            """
-            SELECT 1
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'config_server_settings'
-              AND COLUMN_NAME = %s
-            LIMIT 1
-            """,
-            (column_name,),
-        )
-        if cursor.fetchone():
-            continue
-
-        try:
-            cursor.execute(
-                f"ALTER TABLE config_server_settings ADD COLUMN {column_name} {column_definition}"
-            )
-        except mysql.connector.Error as err:
-            if err.errno == errorcode.ER_DUP_FIELDNAME:
-                continue
-            logging.error(
-                "Falha ao criar coluna %s em config_server_settings: %s",
-                column_name,
-                err,
-            )
-            return False
-
-    return True
+    """Validate the existing auto-join roles configuration; never alter schema."""
+    return _check_columns(
+        cursor,
+        "config_server_settings",
+        ("auto_join_roles_enabled", "auto_join_role_ids"),
+        "Auto-join roles",
+    )
 
 
 def _ensure_birthday_channel_column(cursor) -> bool:
-    """Ensure ``config_server_settings.birthday_channel_id`` exists."""
-
-    cursor.execute(
-        """
-        SELECT 1
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'config_server_settings'
-          AND COLUMN_NAME = 'birthday_channel_id'
-        LIMIT 1
-        """
+    """Validate the existing birthday channel configuration; never alter schema."""
+    return _check_columns(
+        cursor,
+        "config_server_settings",
+        ("birthday_channel_id",),
+        "Birthday channel",
     )
-    if cursor.fetchone():
-        return True
-
-    try:
-        cursor.execute(
-            "ALTER TABLE config_server_settings ADD COLUMN birthday_channel_id BIGINT NULL"
-        )
-        return True
-    except mysql.connector.Error as err:
-        if err.errno == errorcode.ER_DUP_FIELDNAME:
-            return True
-        logging.error(
-            "Falha ao criar coluna birthday_channel_id em config_server_settings: %s",
-            err,
-        )
-        return False
 
 
 def _ensure_collaborative_moderation_columns(cursor) -> bool:
@@ -6099,85 +6048,23 @@ def _ensure_collaborative_moderation_columns(cursor) -> bool:
     return True
 
 def _ensure_hashtag_role_mentions_columns(cursor) -> bool:
-    """Ensure hashtag-driven role mention columns exist in ``config_server_settings``."""
-
-    required_columns = {
-        "hashtag_role_mentions_enabled": "TINYINT(1) NOT NULL DEFAULT 0",
-        "hashtag_role_mentions_channel_ids": "TEXT NULL",
-        "hashtag_role_mentions_author_role_id": "BIGINT NULL",
-        "hashtag_role_mentions_map": "TEXT NULL",
-    }
-
-    for column_name, column_definition in required_columns.items():
-        cursor.execute(
-            """
-            SELECT 1
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'config_server_settings'
-              AND COLUMN_NAME = %s
-            LIMIT 1
-            """,
-            (column_name,),
-        )
-        if cursor.fetchone():
-            continue
-
-        try:
-            cursor.execute(
-                f"ALTER TABLE config_server_settings ADD COLUMN {column_name} {column_definition}"
-            )
-        except mysql.connector.Error as err:
-            if err.errno == errorcode.ER_DUP_FIELDNAME:
-                continue
-            logging.error(
-                "Falha ao criar coluna %s em config_server_settings: %s",
-                column_name,
-                err,
-            )
-            return False
-
-    return True
+    """Validate the existing hashtag role mentions configuration; never alter schema."""
+    return _check_columns(
+        cursor,
+        "config_server_settings",
+        ("hashtag_role_mentions_enabled", "hashtag_role_mentions_channel_ids", "hashtag_role_mentions_author_role_id", "hashtag_role_mentions_map"),
+        "Hashtag role mentions",
+    )
 
 
 def _ensure_thread_owner_only_columns(cursor) -> bool:
-    """Ensure thread-author-only posting columns exist in ``config_server_settings``."""
-
-    required_columns = {
-        "thread_owner_only_enabled": "TINYINT(1) NOT NULL DEFAULT 0",
-        "thread_owner_only_forum_channel_ids": "TEXT NULL",
-    }
-
-    for column_name, column_definition in required_columns.items():
-        cursor.execute(
-            """
-            SELECT 1
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'config_server_settings'
-              AND COLUMN_NAME = %s
-            LIMIT 1
-            """,
-            (column_name,),
-        )
-        if cursor.fetchone():
-            continue
-
-        try:
-            cursor.execute(
-                f"ALTER TABLE config_server_settings ADD COLUMN {column_name} {column_definition}"
-            )
-        except mysql.connector.Error as err:
-            if err.errno == errorcode.ER_DUP_FIELDNAME:
-                continue
-            logging.error(
-                "Falha ao criar coluna %s em config_server_settings: %s",
-                column_name,
-                err,
-            )
-            return False
-
-    return True
+    """Validate the existing thread-owner-only configuration; never alter schema."""
+    return _check_columns(
+        cursor,
+        "config_server_settings",
+        ("thread_owner_only_enabled", "thread_owner_only_forum_channel_ids"),
+        "Thread-owner-only",
+    )
 
 
 def _check_columns(cursor, table_name: str, column_names: tuple[str, ...], domain: str) -> bool:
@@ -6248,61 +6135,13 @@ def _ensure_user_custom_roles_columns(cursor) -> bool:
 
 
 def _ensure_bump_columns(cursor) -> bool:
-    """Ensure bump warning/reward columns exist in ``config_server_settings``."""
-
-    required_columns = {
-        "bump_warn_enabled": "TINYINT(1) NOT NULL DEFAULT 0",
-        "bump_warn_disboard_channel_id": "BIGINT NULL",
-        "bump_warn_target_channel_id": "BIGINT NULL",
-        "bump_warn_messages": "TEXT NULL",
-        "bump_warn_next_at": "DATETIME NULL",
-        "bump_warn_last_bump_at": "DATETIME NULL",
-        "bump_reward_enabled": "TINYINT(1) NOT NULL DEFAULT 0",
-        "bump_reward_temp_role_id": "BIGINT NULL",
-        "bump_reward_role_minutes": "INT NOT NULL DEFAULT 0",
-        "bump_reward_coins": "INT NOT NULL DEFAULT 0",
-        "bump_reward_message": "TEXT NULL",
-        "bump_monthly_enabled": "TINYINT(1) NOT NULL DEFAULT 0",
-        "bump_monthly_disboard_channel_id": "BIGINT NULL",
-        "bump_monthly_reward_role_id": "BIGINT NULL",
-        "bump_monthly_reward_days_1": "INT NOT NULL DEFAULT 21",
-        "bump_monthly_reward_days_2": "INT NOT NULL DEFAULT 14",
-        "bump_monthly_reward_days_3": "INT NOT NULL DEFAULT 7",
-        "bump_monthly_reward_coins_1": "INT NOT NULL DEFAULT 0",
-        "bump_monthly_reward_coins_2": "INT NOT NULL DEFAULT 0",
-        "bump_monthly_reward_coins_3": "INT NOT NULL DEFAULT 0",
-    }
-
-    for column_name, column_definition in required_columns.items():
-        cursor.execute(
-            """
-            SELECT 1
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'config_server_settings'
-              AND COLUMN_NAME = %s
-            LIMIT 1
-            """,
-            (column_name,),
-        )
-        if cursor.fetchone():
-            continue
-
-        try:
-            cursor.execute(
-                f"ALTER TABLE config_server_settings ADD COLUMN {column_name} {column_definition}"
-            )
-        except mysql.connector.Error as err:
-            if err.errno == errorcode.ER_DUP_FIELDNAME:
-                continue
-            logging.error(
-                "Falha ao criar coluna %s em config_server_settings: %s",
-                column_name,
-                err,
-            )
-            return False
-
-    return True
+    """Validate the existing bump configuration; never alter schema."""
+    return _check_columns(
+        cursor,
+        "config_server_settings",
+        ("bump_warn_enabled", "bump_warn_disboard_channel_id", "bump_warn_target_channel_id", "bump_warn_messages", "bump_warn_next_at", "bump_warn_last_bump_at", "bump_reward_enabled", "bump_reward_temp_role_id", "bump_reward_role_minutes", "bump_reward_coins", "bump_reward_message", "bump_monthly_enabled", "bump_monthly_disboard_channel_id", "bump_monthly_reward_role_id", "bump_monthly_reward_days_1", "bump_monthly_reward_days_2", "bump_monthly_reward_days_3", "bump_monthly_reward_coins_1", "bump_monthly_reward_coins_2", "bump_monthly_reward_coins_3"),
+        "Bump",
+    )
 
 
 def isTrendingPresenceEnabled(guild_id: int) -> bool:
