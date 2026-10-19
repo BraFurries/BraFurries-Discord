@@ -102,6 +102,29 @@ def check_startup_schema_table(cursor, table: str) -> None:
         guidance="check BraFurries-Database migrations and production schema before loading Coddy",
     )
 
+# Inventory is scoped by community_id (tenant). The production MariaDB
+# 10.6 export contains service_metadata as JSON-validating LONGTEXT, not a
+# native JSON column; no type conversion or schema repair belongs in Coddy.
+INVENTORY_REQUIRED_COLUMNS = {
+    "user_inventory": frozenset({
+        "id", "community_id", "store_item_id", "owner_user_id",
+        "quantity", "used_in", "valid_until", "service_metadata",
+    }),
+}
+INVENTORY_REQUIRED_UNIQUE_KEYS = {"user_inventory": ("id",)}
+
+
+def check_inventory_schema(cursor) -> None:
+    """Check the existing inventory contract lazily, using metadata SELECTs only."""
+    check_schema_readonly(
+        cursor,
+        required_columns=INVENTORY_REQUIRED_COLUMNS,
+        required_unique_keys=INVENTORY_REQUIRED_UNIQUE_KEYS,
+        error_prefix="coddy_inventory_schema",
+        guidance="review BraFurries-Database migrations before using inventory services",
+    )
+
+
 # Production form schema intentionally keeps nullable form_flows.server_guild_id
 # for legacy records. Do not silently enforce NOT NULL or re-scope old flows.
 FORM_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
