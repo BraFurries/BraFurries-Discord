@@ -16,10 +16,9 @@ from core.database import (
     async_get_voice_sessions,
     async_update_level_config,
     async_upsert_voice_session,
-    _ensure_voice_sessions_table,
+    validate_voice_xp_schema,
     async_getUserId,
     async_includeUser,
-    pooled_connection,
 )
 from core.levels import apply_xp_multipliers, level_from_total_xp
 from core.xp_policy import XpPolicy
@@ -56,8 +55,9 @@ class XpCog(commands.Cog):
         self.voice_sessions: dict[tuple[int, int], dict] = {}
         self._voice_sessions_hydrated = False
         super().__init__()
-        _ensure_voice_sessions_table()
-        self._ensure_voice_xp_audit_tables()
+        # The Database/Flyway repository owns the schema. Never create or repair
+        # tables while loading the Discord cog.
+        validate_voice_xp_schema()
 
     def cog_unload(self):
         self.voice_xp_tick.cancel()
@@ -66,45 +66,6 @@ class XpCog(commands.Cog):
     @staticmethod
     def _utcnow_naive() -> datetime:
         return datetime.utcnow().replace(microsecond=0)
-
-    @staticmethod
-    def _ensure_voice_xp_audit_tables() -> None:
-        with pooled_connection() as cursor:
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS voice_xp_audit_log (
-                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    server_guild_id BIGINT NOT NULL,
-                    discord_user_id BIGINT NOT NULL,
-                    voice_channel_id BIGINT NULL,
-                    event_type VARCHAR(64) NOT NULL,
-                    xp_amount INT NOT NULL DEFAULT 0,
-                    eligible_seconds INT NOT NULL DEFAULT 0,
-                    ineligible_seconds INT NOT NULL DEFAULT 0,
-                    meta_json JSON NULL,
-                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    KEY idx_voice_xp_audit_guild_day (server_guild_id, created_at),
-                    KEY idx_voice_xp_audit_user_day (server_guild_id, discord_user_id, created_at)
-                )
-                """
-            )
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS voice_xp_daily_metrics (
-                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    metric_day DATE NOT NULL,
-                    server_guild_id BIGINT NOT NULL,
-                    modality VARCHAR(32) NOT NULL,
-                    voice_channel_id BIGINT NULL,
-                    total_xp BIGINT NOT NULL DEFAULT 0,
-                    grants_count BIGINT NOT NULL DEFAULT 0,
-                    blocks_count BIGINT NOT NULL DEFAULT 0,
-                    eligible_seconds BIGINT NOT NULL DEFAULT 0,
-                    ineligible_seconds BIGINT NOT NULL DEFAULT 0,
-                    UNIQUE KEY uniq_voice_xp_daily_metrics (metric_day, server_guild_id, modality, voice_channel_id)
-                )
-                """
-            )
 
     async def _register_voice_xp_audit(self, guild_id: int, user_id: int, channel_id: int | None, event_type: str, xp_amount: int = 0, eligible_seconds: int = 0, ineligible_seconds: int = 0, meta_json: str | None = None) -> None:
         async with async_pooled_connection() as cursor:
