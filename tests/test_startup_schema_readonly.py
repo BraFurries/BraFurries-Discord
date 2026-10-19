@@ -122,6 +122,38 @@ def test_three_startup_functions_no_longer_contain_ddl():
         assert "check_startup_schema_table(" in code
         for statement in ("CREATE TABLE", "ALTER TABLE", "DROP TABLE", "DROP INDEX"):
             assert statement not in code
-    assert "initialize_user_economy_table()" in db
-    assert "initialize_bot_sensitive_permission_whitelist_table()" in db
-    assert "initialize_config_levels_table()" in db
+    # Unit tests import core.database without a database; validation must not
+    # happen as an import side effect, only when launching the real service.
+    tree = ast.parse(db)
+    startup_calls = {
+        node.value.func.id
+        for node in tree.body
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+    }
+    for name in (
+        "initialize_user_economy_table",
+        "initialize_bot_sensitive_permission_whitelist_table",
+        "initialize_config_levels_table",
+    ):
+        assert name not in startup_calls
+
+    service = (Path(__file__).resolve().parents[1] / "message_services/discord_service.py").read_text(
+        encoding="utf-8"
+    )
+    service_tree = ast.parse(service)
+    startup = next(
+        n for n in service_tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "run_discord_client"
+    )
+    names = [
+        n.value.func.id for n in startup.body
+        if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+        and isinstance(n.value.func, ast.Name)
+    ]
+    assert names[-3:] == [
+        "initialize_user_economy_table",
+        "initialize_bot_sensitive_permission_whitelist_table",
+        "initialize_config_levels_table",
+    ]
