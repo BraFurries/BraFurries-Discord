@@ -52,6 +52,15 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
         "xp_awarded_text_today", "xp_awarded_text_day",
         "xp_awarded_today", "xp_awarded_day",
     }),
+    # Legacy birthday records are global by users.id (not guild-owned).
+    "user_birthday": frozenset({
+        "user_id", "birth_date", "post_informed_date", "verified",
+        "registered", "registered_at", "18_plus",
+    }),
+    # Guild-specific settings already own the trending_presence flag.
+    "config_server_settings": frozenset({
+        "id", "server_guild_id", "trending_presence_enabled",
+    }),
     "config_levels": frozenset({
         "id", "server_guild_id", "clear_on_exit", "levelup_warning",
         "levelup_warning_channel", "level_up_message", "multiplier",
@@ -78,6 +87,8 @@ REQUIRED_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     # Minigame is an append-only, guild-filtered event table. Production has
     # no unique key per guild; enforce only its existing id primary key.
     "minigame_scores": ("id",),
+    "user_birthday": ("user_id",),
+    "config_server_settings": ("server_guild_id",),
     # MariaDB production dump: community_discord has a unique guild_id,
     # user_level is unique for each user+guild, and bans are historical rows.
     "community_discord": ("guild_id",),
