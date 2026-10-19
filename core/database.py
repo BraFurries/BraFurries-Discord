@@ -380,26 +380,9 @@ def initialize_form_tables() -> None:
 
 
 def initialize_active_call_logs_table() -> None:
-    """Ensure active call log sessions are persisted across bot restarts."""
-
-    create_table_statement = """
-    CREATE TABLE IF NOT EXISTS active_call_logs (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        server_guild_id BIGINT NOT NULL,
-        voice_channel_id BIGINT NOT NULL,
-        log_message_id BIGINT NULL,
-        payload_json LONGTEXT NULL,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        UNIQUE KEY uq_active_call_logs_channel (server_guild_id, voice_channel_id),
-        INDEX idx_active_call_logs_updated_at (updated_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute(create_table_statement)
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize active_call_logs table: %s", err)
+    """Validate existing voice call log sessions schema without DDL or repair fallback."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "active_call_logs")
 
 
 def initialize_portaria_base_config_table() -> None:
@@ -466,25 +449,9 @@ def initialize_portaria_bypasses_table() -> None:
 
 
 def initialize_allowed_feature_channels_table() -> None:
-    """Store allowed channels per guild and feature key."""
-
-    create_table_statement = """
-    CREATE TABLE IF NOT EXISTS allowed_feature_channels (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        server_guild_id BIGINT NOT NULL,
-        feature_key VARCHAR(100) NOT NULL,
-        channel_id BIGINT NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY uq_allowed_feature_channels (server_guild_id, feature_key, channel_id),
-        INDEX idx_allowed_feature_channels_lookup (server_guild_id, feature_key)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute(create_table_statement)
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize allowed_feature_channels table: %s", err)
+    """Validate existing feature channel allowlist schema without DDL or repair fallback."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "allowed_feature_channels")
 
 
 def initialize_user_community_status_invite_columns() -> None:
@@ -720,27 +687,9 @@ def initialize_config_levels_table() -> None:
 
 
 def initialize_minigame_scores_table() -> None:
-    """Ensure weekly minigame scoring table exists."""
-    create_statement = """
-    CREATE TABLE IF NOT EXISTS minigame_scores (
-        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        server_guild_id BIGINT NOT NULL,
-        game_name VARCHAR(40) NOT NULL,
-        points INT NOT NULL DEFAULT 0,
-        won BOOLEAN NOT NULL DEFAULT FALSE,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_minigame_scores_guild_week (server_guild_id, created_at),
-        INDEX idx_minigame_scores_user (user_id),
-        CONSTRAINT fk_minigame_scores_user FOREIGN KEY (user_id) REFERENCES users(id)
-            ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute(create_statement)
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize minigame_scores table: %s", err)
+    """Validate existing guild-scoped minigame score history schema without DDL or repair fallback."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "minigame_scores")
 
 
 def initialize_community_discord_columns() -> None:
@@ -1016,13 +965,10 @@ def is_user_sensitive_permission_whitelisted(guild_id: int, user_id: int, permis
     return is_sensitive_permission_whitelisted(guild_id, user_id, 'user', permission_name)
 
 
-initialize_active_call_logs_table()
 initialize_portaria_base_config_table()
 initialize_user_community_status_invite_columns()
 initialize_portaria_account_release_table()
 initialize_portaria_bypasses_table()
-initialize_allowed_feature_channels_table()
-initialize_minigame_scores_table()
 initialize_boss_event_tables()
 initialize_expedition_tables()
 initialize_community_discord_columns()

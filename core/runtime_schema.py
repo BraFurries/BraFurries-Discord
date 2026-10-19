@@ -10,6 +10,17 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     "bot_sensitive_permission_whitelist": frozenset({
         "id", "server_guild_id", "actor_id", "actor_type", "permission_name", "created_at",
     }),
+    "active_call_logs": frozenset({
+        "id", "server_guild_id", "voice_channel_id", "log_message_id",
+        "payload_json", "updated_at",
+    }),
+    "allowed_feature_channels": frozenset({
+        "id", "server_guild_id", "feature_key", "channel_id", "created_at",
+    }),
+    "minigame_scores": frozenset({
+        "id", "user_id", "server_guild_id", "game_name",
+        "points", "won", "created_at",
+    }),
     "config_levels": frozenset({
         "id", "server_guild_id", "clear_on_exit", "levelup_warning",
         "levelup_warning_channel", "level_up_message", "multiplier",
@@ -31,6 +42,11 @@ REQUIRED_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
         "server_guild_id", "actor_id", "actor_type", "permission_name"
     ),
     "config_levels": ("server_guild_id",),
+    "active_call_logs": ("server_guild_id", "voice_channel_id"),
+    "allowed_feature_channels": ("server_guild_id", "feature_key", "channel_id"),
+    # Minigame is an append-only, guild-filtered event table. Production has
+    # no unique key per guild; enforce only its existing id primary key.
+    "minigame_scores": ("id",),
 }
 
 
