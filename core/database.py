@@ -1136,7 +1136,6 @@ def is_user_sensitive_permission_whitelisted(guild_id: int, user_id: int, permis
     return is_sensitive_permission_whitelisted(guild_id, user_id, 'user', permission_name)
 
 
-initialize_user_economy_table()
 initialize_form_tables()
 initialize_active_call_logs_table()
 initialize_portaria_base_config_table()
@@ -1144,8 +1143,6 @@ initialize_user_community_status_invite_columns()
 initialize_portaria_account_release_table()
 initialize_portaria_bypasses_table()
 initialize_allowed_feature_channels_table()
-initialize_bot_sensitive_permission_whitelist_table()
-initialize_config_levels_table()
 initialize_minigame_scores_table()
 initialize_boss_event_tables()
 initialize_expedition_tables()
