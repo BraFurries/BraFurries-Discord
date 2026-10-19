@@ -92,7 +92,11 @@ def test_split_string_and_fstring_schema_mutations_are_detected():
 
 
 def test_docstrings_are_not_mistaken_for_schema_commands():
-    assert _ddl_literals('def f():\\n    """never alter schema"""\\n    return 1') == []
+    source = """def f():
+    '''never alter schema'''
+    return 1
+"""
+    assert _ddl_literals(source) == []
 
 
 def test_runtime_contains_no_literal_schema_mutations():
