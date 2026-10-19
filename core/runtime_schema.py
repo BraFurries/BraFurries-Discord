@@ -21,6 +21,22 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
         "id", "user_id", "server_guild_id", "game_name",
         "points", "won", "created_at",
     }),
+    # These four schemas use the historical guild_id tenant column, not
+    # server_guild_id. Production dump (2026-10-19) confirms each unique key.
+    "community_boss_event": frozenset({
+        "id", "guild_id", "boss_name", "max_hp", "current_hp", "active",
+        "attack_cooldown_seconds", "created_at", "finished_at",
+    }),
+    "community_boss_contribution": frozenset({
+        "id", "guild_id", "user_id", "total_damage", "updated_at",
+    }),
+    "community_boss_attack_cooldown": frozenset({
+        "id", "guild_id", "user_id", "cooldown_until",
+    }),
+    "community_expedition": frozenset({
+        "id", "guild_id", "active", "started_at", "ends_at",
+        "participants_json", "finalized_at",
+    }),
     "config_levels": frozenset({
         "id", "server_guild_id", "clear_on_exit", "levelup_warning",
         "levelup_warning_channel", "level_up_message", "multiplier",
@@ -47,6 +63,10 @@ REQUIRED_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     # Minigame is an append-only, guild-filtered event table. Production has
     # no unique key per guild; enforce only its existing id primary key.
     "minigame_scores": ("id",),
+    "community_boss_event": ("guild_id",),
+    "community_boss_contribution": ("guild_id", "user_id"),
+    "community_boss_attack_cooldown": ("guild_id", "user_id"),
+    "community_expedition": ("guild_id",),
 }
 
 

@@ -1371,6 +1371,8 @@ def run_discord_client(chatBot):
     initialize_active_call_logs_table()
     initialize_allowed_feature_channels_table()
     initialize_minigame_scores_table()
+    initialize_boss_event_tables()
+    initialize_expedition_tables()
     initialize_form_tables()
     initialize_user_economy_table()
     initialize_bot_sensitive_permission_whitelist_table()
