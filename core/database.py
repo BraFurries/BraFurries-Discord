@@ -3007,63 +3007,13 @@ def finalize_expedition(guild_id: int, finalized_at: int) -> None:
 
 
 def _ensure_economy_config_columns(cursor: MySQLCursorAbstract) -> bool:
-    """Ensure bump economy columns exist in ``config_economy``."""
-
-    required_columns = {
-        "bump_points": "INT NULL DEFAULT NULL",
-        "bump_reward_enabled": "TINYINT(1) NOT NULL DEFAULT 0",
-        "birthday_points": "INT NOT NULL DEFAULT 0",
-    }
-    created_columns: set[str] = set()
-
-    for column_name, column_definition in required_columns.items():
-        cursor.execute(
-            """
-            SELECT 1
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'config_economy'
-              AND COLUMN_NAME = %s
-            LIMIT 1
-            """,
-            (column_name,),
-        )
-        if cursor.fetchone():
-            continue
-
-        try:
-            cursor.execute(
-                f"ALTER TABLE config_economy ADD COLUMN {column_name} {column_definition}"
-            )
-            created_columns.add(column_name)
-        except mysql.connector.Error as err:
-            if err.errno == errorcode.ER_DUP_FIELDNAME:
-                continue
-            logging.error(
-                "Falha ao criar coluna %s em config_economy: %s",
-                column_name,
-                err,
-            )
-            return False
-
-    if "bump_reward_enabled" in created_columns:
-        try:
-            cursor.execute(
-                """
-                UPDATE config_economy
-                SET bump_reward_enabled = 1
-                WHERE bump_reward_enabled = 0
-                  AND bump_points > 0
-                """
-            )
-        except mysql.connector.Error as err:
-            logging.error(
-                "Falha ao migrar bump_reward_enabled em config_economy: %s",
-                err,
-            )
-            return False
-
-    return True
+    """Check Flyway-owned economy settings; never run DDL or backfill here."""
+    return _check_columns(
+        cursor,
+        "config_economy",
+        ("bump_points", "bump_reward_enabled", "birthday_points"),
+        "Economy",
+    )
 
 
 def get_economy_config(guild_id: int) -> dict[str, int]:
@@ -4693,48 +4643,13 @@ def getAllBirthdays(guild_id: int | None = None):
 
 
 def _ensure_birthday_mentionable_column(cursor) -> bool:
-    """Ensure ``user_community_status.birthday_mentionable`` exists."""
-
-    cursor.execute(
-        """
-        SELECT 1
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'user_community_status'
-          AND COLUMN_NAME = 'birthday_mentionable'
-        """
+    """Validate the community-scoped birthday preference without migration."""
+    return _check_columns(
+        cursor,
+        "user_community_status",
+        ("birthday_mentionable",),
+        "Birthday mention preference",
     )
-    if cursor.fetchone():
-        return True
-
-    try:
-        cursor.execute(
-            "ALTER TABLE user_community_status ADD COLUMN birthday_mentionable TINYINT(1) NOT NULL DEFAULT 0"
-        )
-        cursor.execute(
-            """
-            SELECT 1
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'user_birthday'
-              AND COLUMN_NAME = 'mentionable'
-            """
-        )
-        if cursor.fetchone():
-            cursor.execute(
-                """
-                UPDATE user_community_status ucs
-                JOIN user_birthday ub ON ub.user_id = ucs.user_id
-                SET ucs.birthday_mentionable = ub.mentionable
-                """
-            )
-        return True
-    except mysql.connector.Error as err:
-        logging.error(
-            "Falha ao criar coluna birthday_mentionable em user_community_status: %s",
-            err,
-        )
-        return False
 
 
 def _set_community_birthday_mentionable(guild_id: int, user_id: int, mentionable: bool) -> None:
