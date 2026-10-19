@@ -1368,6 +1368,8 @@ def run_discord_client(chatBot):
 
     # Schema verification belongs to actual process startup, never module import.
     # These checks are read-only and fail closed before connecting to Discord.
+    initialize_user_birthday_registration_columns()
+    initialize_trending_presence_column()
     initialize_community_discord_columns()
     initialize_user_bans_registered_at_column()
     initialize_user_level_voice_xp_columns()

@@ -646,130 +646,15 @@ def initialize_user_level_voice_xp_columns() -> None:
 
 
 def initialize_user_birthday_registration_columns() -> None:
-    """Ensure ``user_birthday`` has post-registration audit columns."""
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute("SHOW COLUMNS FROM user_birthday LIKE 'post_informed_date'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_birthday "
-                    "ADD COLUMN post_informed_date DATE NULL AFTER birth_date"
-                )
-
-            cursor.execute("SHOW COLUMNS FROM user_birthday LIKE 'registered_at'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_birthday "
-                    "ADD COLUMN registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER registered"
-                )
-
-            cursor.execute("SHOW COLUMNS FROM user_birthday LIKE '18_plus'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_birthday "
-                    "ADD COLUMN `18_plus` TINYINT(1) NOT NULL DEFAULT 0 AFTER registered_at"
-                )
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize user_birthday registration columns: %s", err)
+    """Validate existing legacy birthday registration columns without schema writes."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "user_birthday")
 
 
 def initialize_trending_presence_column() -> None:
-    """Ensure ``config_server_settings.trending_presence_enabled`` exists at startup."""
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute(
-                """
-                SELECT 1
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_SCHEMA = DATABASE()
-                  AND TABLE_NAME = 'config_server_settings'
-                  AND COLUMN_NAME = 'trending_presence_enabled'
-                LIMIT 1
-                """
-            )
-            if cursor.fetchone() is None:
-                try:
-                    cursor.execute(
-                        "ALTER TABLE config_server_settings "
-                        "ADD COLUMN trending_presence_enabled TINYINT(1) NOT NULL DEFAULT 0"
-                    )
-                except mysql.connector.Error as err:
-                    if err.errno != errorcode.ER_DUP_FIELDNAME:
-                        raise
-    except mysql.connector.Error as err:
-        error_message = (
-            "Startup migration failed for config_server_settings.trending_presence_enabled. "
-            "Apply migrations before serving events."
-        )
-        logging.critical("%s mysql_error=%s", error_message, err)
-        raise RuntimeError(error_message) from err
-
-
-def register_sensitive_permission_whitelist(
-    guild_id: int,
-    actor_id: int,
-    actor_type: Literal['bot', 'user'],
-    permission_name: str,
-) -> bool:
-    """Register a sensitive permission that is allowed for an actor (bot or user)."""
-
-    if permission_name == "administrator":
-        return False
-
-    query = (
-        "INSERT IGNORE INTO bot_sensitive_permission_whitelist "
-        "(server_guild_id, actor_id, actor_type, permission_name) VALUES (%s, %s, %s, %s)"
-    )
+    """Validate existing guild-scoped server settings without schema writes."""
     with pooled_connection() as cursor:
-        cursor.execute(query, (guild_id, actor_id, actor_type, permission_name))
-        return cursor.rowcount > 0
-
-
-def remove_sensitive_permission_whitelist(
-    guild_id: int,
-    actor_id: int,
-    actor_type: Literal['bot', 'user'],
-    permission_name: str,
-) -> bool:
-    """Remove a sensitive permission from actor whitelist."""
-
-    query = (
-        "DELETE FROM bot_sensitive_permission_whitelist "
-        "WHERE server_guild_id = %s AND actor_id = %s AND actor_type = %s AND permission_name = %s"
-    )
-    with pooled_connection() as cursor:
-        cursor.execute(query, (guild_id, actor_id, actor_type, permission_name))
-        return cursor.rowcount > 0
-
-
-def list_sensitive_permission_whitelist(
-    guild_id: int,
-    actor_id: int | None = None,
-    actor_type: Literal['bot', 'user'] | None = None,
-) -> list[dict]:
-    """Return whitelist entries for a guild and optional actor filters."""
-
-    base_query = (
-        "SELECT actor_id, actor_type, permission_name "
-        "FROM bot_sensitive_permission_whitelist WHERE server_guild_id = %s"
-    )
-    params: list[int | str] = [guild_id]
-
-    if actor_id is not None:
-        base_query += " AND actor_id = %s"
-        params.append(actor_id)
-
-    if actor_type is not None:
-        base_query += " AND actor_type = %s"
-        params.append(actor_type)
-
-    base_query += " ORDER BY actor_type, actor_id, permission_name"
-
-    with pooled_connection() as cursor:
-        cursor.execute(base_query, tuple(params))
-        return cursor.fetchall() or []
+        check_startup_schema_table(cursor, "config_server_settings")
 
 
 def is_sensitive_permission_whitelisted(
@@ -833,8 +718,6 @@ initialize_portaria_base_config_table()
 initialize_user_community_status_invite_columns()
 initialize_portaria_account_release_table()
 initialize_portaria_bypasses_table()
-initialize_user_birthday_registration_columns()
-initialize_trending_presence_column()
 
 _USER_INVENTORY_SCHEMA_VALIDATED: Optional[bool] = None
 
