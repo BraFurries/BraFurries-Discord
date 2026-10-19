@@ -67,7 +67,7 @@ def test_canonical_production_metadata_passes_without_ddl(table):
 def test_missing_column_fails_before_modifying_any_schema(table):
     col = sorted(REQUIRED_COLUMNS[table])[0]
     cursor = FakeMetadataCursor(table, missing_column=col)
-    with pytest.raises(RuntimeError, match=rf"{table}\\.{col}"):
+    with pytest.raises(RuntimeError, match=rf"{table}\.{col}"):
         check_startup_schema_table(cursor, table)
     assert len(cursor.sql) == 1
     assert_only_readonly_metadata(cursor)
