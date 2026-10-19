@@ -657,6 +657,71 @@ def initialize_trending_presence_column() -> None:
         check_startup_schema_table(cursor, "config_server_settings")
 
 
+def register_sensitive_permission_whitelist(
+    guild_id: int,
+    actor_id: int,
+    actor_type: Literal['bot', 'user'],
+    permission_name: str,
+) -> bool:
+    """Register a sensitive permission that is allowed for an actor (bot or user)."""
+
+    if permission_name == "administrator":
+        return False
+
+    query = (
+        "INSERT IGNORE INTO bot_sensitive_permission_whitelist "
+        "(server_guild_id, actor_id, actor_type, permission_name) VALUES (%s, %s, %s, %s)"
+    )
+    with pooled_connection() as cursor:
+        cursor.execute(query, (guild_id, actor_id, actor_type, permission_name))
+        return cursor.rowcount > 0
+
+
+def remove_sensitive_permission_whitelist(
+    guild_id: int,
+    actor_id: int,
+    actor_type: Literal['bot', 'user'],
+    permission_name: str,
+) -> bool:
+    """Remove a sensitive permission from actor whitelist."""
+
+    query = (
+        "DELETE FROM bot_sensitive_permission_whitelist "
+        "WHERE server_guild_id = %s AND actor_id = %s AND actor_type = %s AND permission_name = %s"
+    )
+    with pooled_connection() as cursor:
+        cursor.execute(query, (guild_id, actor_id, actor_type, permission_name))
+        return cursor.rowcount > 0
+
+
+def list_sensitive_permission_whitelist(
+    guild_id: int,
+    actor_id: int | None = None,
+    actor_type: Literal['bot', 'user'] | None = None,
+) -> list[dict]:
+    """Return whitelist entries for a guild and optional actor filters."""
+
+    base_query = (
+        "SELECT actor_id, actor_type, permission_name "
+        "FROM bot_sensitive_permission_whitelist WHERE server_guild_id = %s"
+    )
+    params: list[int | str] = [guild_id]
+
+    if actor_id is not None:
+        base_query += " AND actor_id = %s"
+        params.append(actor_id)
+
+    if actor_type is not None:
+        base_query += " AND actor_type = %s"
+        params.append(actor_type)
+
+    base_query += " ORDER BY actor_type, actor_id, permission_name"
+
+    with pooled_connection() as cursor:
+        cursor.execute(base_query, tuple(params))
+        return cursor.fetchall() or []
+
+
 def is_sensitive_permission_whitelisted(
     guild_id: int,
     actor_id: int,

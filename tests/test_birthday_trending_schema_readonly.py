@@ -111,6 +111,16 @@ def test_no_ddl_or_module_import_checks_for_birthday_and_trending():
         and isinstance(n.value.func, ast.Name)
     }
     assert set(names).isdisjoint(import_calls)
+    # Guard against collateral removal of the three public whitelist functions.
+    for preserved in (
+        "register_sensitive_permission_whitelist",
+        "remove_sensitive_permission_whitelist",
+        "list_sensitive_permission_whitelist",
+    ):
+        assert any(
+            isinstance(node, ast.FunctionDef) and node.name == preserved
+            for node in tree.body
+        ), preserved
     service = (root / "message_services/discord_service.py").read_text(encoding="utf-8")
     runner = next(
         n for n in ast.parse(service).body
