@@ -37,6 +37,21 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
         "id", "guild_id", "active", "started_at", "ends_at",
         "participants_json", "finalized_at",
     }),
+    "community_discord": frozenset({
+        "id", "community_id", "guild_id", "active", "discord_admin_id",
+        "users_quantity", "membership_sync_state",
+        "last_full_reconciliation_at", "last_membership_event_at",
+    }),
+    "user_bans": frozenset({
+        "id", "user_id", "community_id", "registered_at", "date",
+        "reason", "revoked_at",
+    }),
+    "user_level": frozenset({
+        "id", "server_guild_id", "user_id", "total_xp", "current_level",
+        "xp_awarded_voice_today", "xp_awarded_voice_day",
+        "xp_awarded_text_today", "xp_awarded_text_day",
+        "xp_awarded_today", "xp_awarded_day",
+    }),
     "config_levels": frozenset({
         "id", "server_guild_id", "clear_on_exit", "levelup_warning",
         "levelup_warning_channel", "level_up_message", "multiplier",
@@ -63,6 +78,11 @@ REQUIRED_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     # Minigame is an append-only, guild-filtered event table. Production has
     # no unique key per guild; enforce only its existing id primary key.
     "minigame_scores": ("id",),
+    # MariaDB production dump: community_discord has a unique guild_id,
+    # user_level is unique for each user+guild, and bans are historical rows.
+    "community_discord": ("guild_id",),
+    "user_bans": ("id",),
+    "user_level": ("user_id", "server_guild_id"),
     "community_boss_event": ("guild_id",),
     "community_boss_contribution": ("guild_id", "user_id"),
     "community_boss_attack_cooldown": ("guild_id", "user_id"),

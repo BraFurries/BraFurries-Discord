@@ -628,92 +628,21 @@ def initialize_minigame_scores_table() -> None:
 
 
 def initialize_community_discord_columns() -> None:
-    """Ensure ``community_discord`` includes presence/admin/member metadata."""
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute("SHOW COLUMNS FROM community_discord LIKE 'active'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE community_discord "
-                    "ADD COLUMN active TINYINT(1) NOT NULL DEFAULT 1 AFTER guild_id"
-                )
-
-            cursor.execute("SHOW COLUMNS FROM community_discord LIKE 'discord_admin_id'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE community_discord "
-                    "ADD COLUMN discord_admin_id BIGINT NULL AFTER active"
-                )
-
-            cursor.execute("SHOW COLUMNS FROM community_discord LIKE 'users_quantity'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE community_discord "
-                    "ADD COLUMN users_quantity INT NOT NULL DEFAULT 0 AFTER discord_admin_id"
-                )
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize community_discord columns: %s", err)
+    """Read-only preflight for Discord community identity and lifecycle columns."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "community_discord")
 
 
 def initialize_user_bans_registered_at_column() -> None:
-    """Ensure ``user_bans`` has ``registered_at`` populated at insertion time."""
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute("SHOW COLUMNS FROM user_bans LIKE 'registered_at'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_bans "
-                    "ADD COLUMN registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
-                )
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize user_bans.registered_at column: %s", err)
+    """Read-only preflight for legacy community bans and audit timestamp."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "user_bans")
 
 
 def initialize_user_level_voice_xp_columns() -> None:
-    """Ensure user-level XP cap tracking columns exist."""
-
-    try:
-        with pooled_connection() as cursor:
-            cursor.execute("SHOW COLUMNS FROM user_level LIKE 'xp_awarded_voice_today'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_level "
-                    "ADD COLUMN xp_awarded_voice_today INT NOT NULL DEFAULT 0"
-                )
-            cursor.execute("SHOW COLUMNS FROM user_level LIKE 'xp_awarded_voice_day'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_level "
-                    "ADD COLUMN xp_awarded_voice_day DATE NULL"
-                )
-            cursor.execute("SHOW COLUMNS FROM user_level LIKE 'xp_awarded_text_today'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_level "
-                    "ADD COLUMN xp_awarded_text_today INT NOT NULL DEFAULT 0"
-                )
-            cursor.execute("SHOW COLUMNS FROM user_level LIKE 'xp_awarded_text_day'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_level "
-                    "ADD COLUMN xp_awarded_text_day DATE NULL"
-                )
-            cursor.execute("SHOW COLUMNS FROM user_level LIKE 'xp_awarded_today'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_level "
-                    "ADD COLUMN xp_awarded_today INT NOT NULL DEFAULT 0"
-                )
-            cursor.execute("SHOW COLUMNS FROM user_level LIKE 'xp_awarded_day'")
-            if cursor.fetchone() is None:
-                cursor.execute(
-                    "ALTER TABLE user_level "
-                    "ADD COLUMN xp_awarded_day DATE NULL"
-                )
-    except mysql.connector.Error as err:
-        logging.error("Failed to initialize user_level voice xp columns: %s", err)
+    """Read-only preflight for tenant-scoped user XP cap tracking."""
+    with pooled_connection() as cursor:
+        check_startup_schema_table(cursor, "user_level")
 
 
 def initialize_user_birthday_registration_columns() -> None:
@@ -904,9 +833,6 @@ initialize_portaria_base_config_table()
 initialize_user_community_status_invite_columns()
 initialize_portaria_account_release_table()
 initialize_portaria_bypasses_table()
-initialize_community_discord_columns()
-initialize_user_bans_registered_at_column()
-initialize_user_level_voice_xp_columns()
 initialize_user_birthday_registration_columns()
 initialize_trending_presence_column()
 
