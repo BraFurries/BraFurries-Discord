@@ -185,3 +185,6 @@ teste*.py
 **/token.json
 /discord
 
+
+# Ephemeral CI checkout of the Database-owned canonical schema
+/.ci/database-baseline/

@@ -49,3 +49,20 @@ jobs:
 
       - name: Run tests
         run: python -m pytest
+
+      - name: Checkout pinned Database baseline (read only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: BraFurries/BraFurries-Database
+          ref: 0df5070079d26d18752282c642a9ff10037c8bfb
+          path: .ci/database-baseline
+          persist-credentials: false
+
+      - name: Validate Coddy startup schema preflights on disposable MariaDB
+        env:
+          BRF_DISPOSABLE_SCHEMA_COMPAT: "true"
+        run: |
+          set -euo pipefail
+          test "$(git -C .ci/database-baseline rev-parse HEAD)" = "0df5070079d26d18752282c642a9ff10037c8bfb"
+          test "$(grep -c '^CREATE TABLE ' .ci/database-baseline/flyway/sql/baseline/B20261020_001__adopt_production_schema.sql)" -eq 107
+          python -m pytest -q tests/test_disposable_database_baseline_contract.py
