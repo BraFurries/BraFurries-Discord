@@ -59,8 +59,8 @@ def session_factory(responses, request_log):
 
 
 class FakeGuild:
-    def __init__(self, members, *, member_count=None):
-        self.id = 100
+    def __init__(self, members, *, member_count=None, guild_id=100):
+        self.id = guild_id
         self.name = "Guild"
         self.owner_id = 1
         self.owner = None
@@ -73,8 +73,8 @@ class FakeGuild:
             yield member
 
 
-def fake_member(user_id=1):
-    guild = SimpleNamespace(id=100)
+def fake_member(user_id=1, *, guild_id=100):
+    guild = SimpleNamespace(id=guild_id)
     return SimpleNamespace(
         id=user_id,
         name=f"user{user_id}",
@@ -573,3 +573,135 @@ def test_api_http_status_is_preserved_for_safe_sync_error_code():
         )
 
     assert captured.value.status == 413
+
+
+def test_reconcile_full_transport_contract_keeps_two_guilds_separate():
+    """Exercise Coddy's real API client and reconciliation with mocked HTTP only.
+
+    Uses API's current create(201), batch, finalize, finish contract. This does
+    not boot the Discord client, contact the API, or mutate a database.
+    """
+    requests = []
+    # The same Discord user can appear in both guilds without merging tenant state.
+    guild_a = FakeGuild([fake_member(7, guild_id=100), fake_member(8, guild_id=100)])
+    guild_b = FakeGuild([fake_member(7, guild_id=200)], guild_id=200)
+
+    responses = [
+        FakeResponse({"communityId": 11, "guildId": "100"}),
+        FakeResponse({"runId": 1001}, status=201),
+        FakeResponse({"updatedMembers": 2}),
+        FakeResponse({"communityId": 11, "guildId": "100", "updatedMembers": 0}),
+        FakeResponse({"status": "SUCCESS"}),
+        FakeResponse({"communityId": 22, "guildId": "200"}),
+        FakeResponse({"runId": 2001}, status=201),
+        FakeResponse({"updatedMembers": 1}),
+        FakeResponse({"communityId": 22, "guildId": "200", "updatedMembers": 0}),
+        FakeResponse({"status": "SUCCESS"}),
+    ]
+    client = CommunityLifecycleApiClient(
+        base_url="http://api.invalid/",
+        token="synthetic",
+        session_factory=session_factory(responses, requests),
+    )
+
+    a = asyncio.run(reconcile_guild(
+        guild_a, client, trigger="STARTUP", approved_resolver=lambda m: m.id == 7,
+    ))
+    b = asyncio.run(reconcile_guild(
+        guild_b, client, trigger="MANUAL", approved_resolver=lambda _m: False,
+    ))
+    assert responses == []
+    assert (a["communityId"], a["guildId"], a["updatedMembers"]) == (11, "100", 2)
+    assert (b["communityId"], b["guildId"], b["updatedMembers"]) == (22, "200", 1)
+    assert len(requests) == 10
+    assert all(kwargs["headers"] == {"Authorization": "Bearer synthetic"} for _, _, kwargs in requests)
+
+    for offset, guild_id, run_id, trigger, expected_users, expected_approved in (
+        (0, 100, 1001, "STARTUP", ["7", "8"], [True, False]),
+        (5, 200, 2001, "MANUAL", ["7"], [False]),
+    ):
+        calls = requests[offset:offset + 5]
+        prefix = f"http://api.invalid/internal/community-networks/discord/{guild_id}"
+        assert [(method, url) for method, url, _ in calls] == [
+            ("PUT", prefix),
+            ("POST", prefix + "/sync-runs"),
+            ("PUT", prefix + "/members/snapshot/batch"),
+            ("PUT", prefix + "/members/snapshot/finalize"),
+            ("PATCH", prefix + f"/sync-runs/{run_id}"),
+        ]
+        assert calls[0][2]["json"]["ownerDiscordUserId"] == "1"
+        assert calls[1][2]["json"] == {"trigger": trigger, "status": "RUNNING"}
+        batch = calls[2][2]["json"]
+        assert batch["runId"] == run_id
+        assert [member["discordUserId"] for member in batch["members"]] == expected_users
+        assert [member["approved"] for member in batch["members"]] == expected_approved
+        assert calls[3][2]["json"] == {
+            "runId": run_id,
+            "complete": True,
+            "observedMembers": len(expected_users),
+        }
+        assert calls[4][2]["json"] == {
+            "status": "SUCCESS",
+            "observedMembers": len(expected_users),
+            "updatedMembers": len(expected_users),
+            "errorCode": None,
+        }
+
+
+def test_incomplete_member_view_never_calls_batch_or_finalize_via_real_client():
+    requests = []
+    responses = [
+        FakeResponse({"communityId": 22, "guildId": "200"}),
+        FakeResponse({"runId": 2002}, status=201),
+        FakeResponse({"status": "FAILED"}),
+    ]
+    client = CommunityLifecycleApiClient(
+        base_url="http://api.invalid",
+        token="synthetic",
+        session_factory=session_factory(responses, requests),
+    )
+    guild = FakeGuild([fake_member(7, guild_id=200)], member_count=2, guild_id=200)
+
+    with pytest.raises(IncompleteGuildSnapshot, match="incompleto"):
+        asyncio.run(reconcile_guild(
+            guild, client, trigger="RECOVERY", approved_resolver=lambda _m: True,
+        ))
+
+    assert responses == []
+    assert [method for method, _, _ in requests] == ["PUT", "POST", "PATCH"]
+    assert all("/200" in url for _, url, _ in requests if "/discord/200" in url)
+    assert requests[-1][1].endswith("/discord/200/sync-runs/2002")
+    assert requests[-1][2]["json"]["status"] == "FAILED"
+    assert requests[-1][2]["json"]["errorCode"] == "INCOMPLETE_SNAPSHOT"
+
+
+def test_transient_second_batch_error_cannot_finalize_incomplete_snapshot():
+    requests = []
+    responses = [
+        FakeResponse({"communityId": 11, "guildId": "100"}),
+        FakeResponse({"runId": 1003}, status=201),
+        FakeResponse({"updatedMembers": MEMBER_BATCH_SIZE}),
+        FakeResponse({"error": "temporary"}, status=503),
+        FakeResponse({"status": "FAILED"}),
+    ]
+    client = CommunityLifecycleApiClient(
+        base_url="http://api.invalid",
+        token="synthetic",
+        session_factory=session_factory(responses, requests),
+    )
+    guild = FakeGuild([fake_member(i) for i in range(1, MEMBER_BATCH_SIZE + 2)])
+
+    with pytest.raises(CommunityLifecycleApiError) as captured:
+        asyncio.run(reconcile_guild(
+            guild, client, trigger="STARTUP", approved_resolver=lambda _m: True,
+        ))
+
+    assert captured.value.status == 503
+    assert captured.value.retryable is True
+    assert responses == []
+    assert len(requests) == 5
+    assert [len(kwargs["json"]["members"]) for method, url, kwargs in requests
+            if url.endswith("/members/snapshot/batch")] == [MEMBER_BATCH_SIZE, 1]
+    assert not any("/members/snapshot/finalize" in url for _, url, _ in requests)
+    assert requests[-1][2]["json"]["status"] == "FAILED"
+    assert requests[-1][2]["json"]["errorCode"] == f"API_503_BATCH_{MEMBER_BATCH_SIZE}"
