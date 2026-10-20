@@ -669,7 +669,7 @@ def test_incomplete_member_view_never_calls_batch_or_finalize_via_real_client():
 
     assert responses == []
     assert [method for method, _, _ in requests] == ["PUT", "POST", "PATCH"]
-    assert all("/200" in url for _, url, _ in requests if "/discord/200" in url)
+    assert all(url.startswith("http://api.invalid/internal/community-networks/discord/200") for _, url, _ in requests)
     assert requests[-1][1].endswith("/discord/200/sync-runs/2002")
     assert requests[-1][2]["json"]["status"] == "FAILED"
     assert requests[-1][2]["json"]["errorCode"] == "INCOMPLETE_SNAPSHOT"
