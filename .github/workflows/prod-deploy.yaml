@@ -8,6 +8,14 @@ on:
   push:
     branches:
       - main
+    # Skip automatic production deployment when only non-runtime files change.
+    # Functional code, build dependencies and deployment scripts still trigger.
+    paths-ignore:
+      - 'tests/**'
+      - 'docs/**'
+      - '.github/workflows/pr-validation.yml'
+      - '.github/workflows/prod-deploy.yaml'
+      - '.gitignore'
 
 jobs:
   deploy-secret-scan:
