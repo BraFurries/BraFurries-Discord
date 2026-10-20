@@ -10,7 +10,17 @@ def test_production_workflow_only_runs_from_main_and_supports_manual_deploy():
     workflow = (ROOT / ".github/workflows/prod-deploy.yaml").read_text(encoding="utf-8")
     triggers = workflow.split("\non:\n", 1)[1].split("\njobs:\n", 1)[0]
 
-    assert triggers.strip() == "workflow_dispatch:\n  push:\n    branches:\n      - main"
+    assert triggers.strip().startswith("workflow_dispatch:\n  push:\n    branches:\n      - main")
+    assert "paths-ignore:" in triggers
+    for ignored in (
+        "tests/**", "docs/**", ".gitignore",
+        ".github/workflows/pr-validation.yml", ".github/workflows/prod-deploy.yaml",
+    ):
+        assert f"- '{ignored}'" in triggers
+    # Runtime/configuration or build changes must still trigger the existing
+    # automatic-deploy flag rather than being silently ignored.
+    for required_trigger in ("core/**", "cogs/**", "requirements.txt", "Dockerfile"):
+        assert f"- '{required_trigger}'" not in triggers
     assert workflow.count("github.ref == 'refs/heads/main'") >= 2
     assert "github.event_name == 'workflow_dispatch'" in workflow
     assert "vars.CODDY_AUTO_DEPLOY_ENABLED == 'true'" in workflow
