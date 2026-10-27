@@ -115,7 +115,7 @@ def test_no_birthday_approval_removes_configured_visitor_only_in_current_guild(m
     )
     context.routing.assert_awaited_once()
     assert context.rollback.call_count == 0
-    assert "sucesso" in context.interaction.followup.send.await_args.args[0]
+    assert "sucesso" in context.interaction.followup.send.await_args.kwargs["content"]
 
 
 def test_no_birthday_approval_is_idempotent_when_visitor_already_removed(monkeypatch):
