@@ -162,6 +162,30 @@ class PortariaDecisionView(discord.ui.View):
                     )
                     return
 
+                # An account eligible for provisional access must not be
+                # accidentally granted full access just because a form omits
+                # birthday. The no-birthday provisional flow needs its own
+                # temporary-role lifecycle; fail closed until then.
+                if bool(config.get("aprovacao_acesso_provisorio_ativo")):
+                    age_limit = 30
+                    configured_limit = int(config.get("idade_minima_conta_acesso_provisorio_dias") or 30)
+                    if (
+                        bool(config.get("idade_minima_conta_acesso_provisorio_ativa"))
+                        and configured_limit > 0
+                    ):
+                        age_limit = configured_limit
+                    account_age = (now().date() - member.created_at.date()).days
+                    if account_age < age_limit:
+                        await interaction.followup.send(
+                            content=(
+                                "Não foi possível concluir a aprovação definitiva: "
+                                "a Portaria exige acesso provisório para contas recentes. "
+                                "A ficha permanece pendente para análise da equipe."
+                            ),
+                            ephemeral=True,
+                        )
+                        return
+
                 # Without a birthday we cannot assign age roles, but a definitive
                 # Portaria approval must still release the configured Visitor role.
                 visitante_role_id = config.get("visitante_role_id")
