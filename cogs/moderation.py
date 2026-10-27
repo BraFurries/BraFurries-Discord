@@ -2434,6 +2434,14 @@ class ModerationCog(commands.Cog):
                 ephemeral=True,
             )
 
+        # user_bans.reason is VARCHAR(256); reject invalid input before recording
+        # any administrative action or mutating Discord state.
+        if not reason.strip() or len(reason) > 256:
+            return await ctx.response.send_message(
+                content="O motivo do banimento deve ter entre 1 e 256 caracteres.",
+                ephemeral=True,
+            )
+
         await ctx.response.send_message(content='Processando banimento...', ephemeral=True)
 
         valid_until: datetime | None = None
