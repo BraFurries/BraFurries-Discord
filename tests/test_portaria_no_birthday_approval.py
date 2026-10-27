@@ -24,11 +24,12 @@ class FakeMember:
     def __init__(self, member_id: int, roles: list[FakeRole]):
         self.id = member_id
         self.roles = roles
+        self.created_at = datetime.now()
         self.remove_roles = AsyncMock()
 
 
 def build_approval(monkeypatch, *, role_present=True, configured=True, can_manage=True,
-                   submission_guild_id=100):
+                   submission_guild_id=100, provisional=False):
     visitor_role = FakeRole(501)
     staff_role = FakeRole(502)
     member = FakeMember(42, [visitor_role] if role_present else [])
@@ -69,7 +70,7 @@ def build_approval(monkeypatch, *, role_present=True, configured=True, can_manag
     monkeypatch.setattr(portaria_views, "get_form_submission", lambda _id: submission)
     monkeypatch.setattr(
         portaria_views, "get_portaria_base_config",
-        lambda _guild_id: {"visitante_role_id": 501},
+        lambda _guild_id: {"visitante_role_id": 501, "aprovacao_acesso_provisorio_ativo": provisional},
     )
     monkeypatch.setattr(portaria_views, "record_form_decision", decision_record)
     monkeypatch.setattr(portaria_views, "includeUser", register)
@@ -173,3 +174,15 @@ def test_approval_rejects_submission_from_other_guild_before_any_side_effect(mon
     context.decision_record.assert_not_called()
     context.register.assert_not_called()
     context.member.remove_roles.assert_not_awaited()
+
+
+def test_recent_account_with_provisional_policy_cannot_bypass_temporary_access(monkeypatch):
+    context = build_approval(monkeypatch, provisional=True)
+
+    decide(context)
+
+    context.decision_record.assert_not_called()
+    context.register.assert_not_called()
+    context.member.remove_roles.assert_not_awaited()
+    context.routing.assert_not_awaited()
+    assert "acesso provisório" in context.interaction.followup.send.await_args.kwargs["content"]
