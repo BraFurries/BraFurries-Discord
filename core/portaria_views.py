@@ -73,6 +73,13 @@ class PortariaDecisionView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        # A staff member from another guild must never decide this submission.
+        if interaction.guild is None or int(submission.get("guild_id") or 0) != interaction.guild.id:
+            await interaction.response.send_message(
+                content="Esta ficha não pertence ao servidor atual.",
+                ephemeral=True,
+            )
+            return
         if submission["status"] != "pending":
             await interaction.response.send_message(
                 content="Este formulário já foi analisado.",
@@ -155,6 +162,42 @@ class PortariaDecisionView(discord.ui.View):
                     )
                     return
 
+                # Without a birthday we cannot assign age roles, but a definitive
+                # Portaria approval must still release the configured Visitor role.
+                visitante_role_id = config.get("visitante_role_id")
+                cargo_visitante = (
+                    interaction.guild.get_role(int(visitante_role_id))
+                    if visitante_role_id else None
+                )
+                if cargo_visitante is None:
+                    await interaction.followup.send(
+                        content=(
+                            "Não foi possível aprovar: o cargo Visitante da Portaria "
+                            "não está configurado ou não existe neste servidor."
+                        ),
+                        ephemeral=True,
+                    )
+                    return
+
+                if cargo_visitante in member.roles:
+                    bot_user = interaction.client.user
+                    bot_member = interaction.guild.me or (
+                        interaction.guild.get_member(bot_user.id) if bot_user else None
+                    )
+                    if (
+                        bot_member is None
+                        or not bot_member.guild_permissions.manage_roles
+                        or cargo_visitante >= bot_member.top_role
+                    ):
+                        await interaction.followup.send(
+                            content=(
+                                "Não foi possível aprovar: o Coddy precisa de permissão "
+                                "para gerenciar o cargo Visitante e de um cargo superior a ele."
+                            ),
+                            ephemeral=True,
+                        )
+                        return
+
                 try:
                     record_form_decision(
                         self.submission_id,
@@ -171,6 +214,11 @@ class PortariaDecisionView(discord.ui.View):
 
                 try:
                     includeUser(member, interaction.guild.id, datetime.now())
+                    if cargo_visitante in member.roles:
+                        await member.remove_roles(
+                            cargo_visitante,
+                            reason="Aprovação da ficha da Portaria sem data de nascimento",
+                        )
                 except Exception as exc:
                     rollback_ok = rollback_form_decision(
                         self.submission_id,
@@ -180,7 +228,7 @@ class PortariaDecisionView(discord.ui.View):
                     if rollback_ok:
                         await interaction.followup.send(
                             content=(
-                                "Não foi possível registrar o usuário. "
+                                "Não foi possível finalizar a aprovação ou remover o cargo Visitante. "
                                 "A decisão foi revertida para pendente; você pode tentar novamente. "
                                 f"Detalhes: {exc}"
                             ),
@@ -189,8 +237,8 @@ class PortariaDecisionView(discord.ui.View):
                     else:
                         await interaction.followup.send(
                             content=(
-                                "A decisão foi registrada, mas houve falha ao registrar o usuário "
-                                "e não foi possível reverter automaticamente. "
+                                "A decisão foi registrada, mas houve falha ao finalizar a aprovação "
+                                "ou remover o cargo Visitante e não foi possível revertê-la. "
                                 "Revise manualmente o status da ficha e cargos do membro. "
                                 f"Detalhes: {exc}"
                             ),
