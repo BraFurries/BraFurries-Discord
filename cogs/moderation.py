@@ -8,6 +8,7 @@ from discord.ext import commands, tasks
 from datetime import timedelta, datetime, date, timezone
 from dateutil.relativedelta import relativedelta
 from core.time_functions import now
+from core.moderation_validation import BAN_REASON_MAX_LENGTH, valid_ban_reason
 from core.database import (
     assignTempRole,
     getProfileData,
@@ -2434,11 +2435,11 @@ class ModerationCog(commands.Cog):
                 ephemeral=True,
             )
 
-        # user_bans.reason is VARCHAR(256); reject invalid input before recording
-        # any administrative action or mutating Discord state.
-        if not reason.strip() or len(reason) > 256:
+        # Valid only after the Database capacity migration; never truncate
+        # detailed moderation records or apply Discord effects without a ledger.
+        if not valid_ban_reason(reason):
             return await ctx.response.send_message(
-                content="O motivo do banimento deve ter entre 1 e 256 caracteres.",
+                content=f"O motivo do banimento deve ter entre 1 e {BAN_REASON_MAX_LENGTH} caracteres.",
                 ephemeral=True,
             )
 
