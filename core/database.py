@@ -5266,10 +5266,14 @@ def registerUserBan(
                 return False
 
             community_id = community_row["community_id"]
-            ban_date_str = ban_date.strftime('%Y-%m-%d %H:%M:%S') if ban_date else None
-            if not ban_date_str and not allow_incomplete_record:
-                ban_date_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            valid_until_str = valid_until.strftime('%Y-%m-%d %H:%M:%S') if valid_until else None
+            # The current Flyway baseline defines both fields as DATE, not DATETIME.
+            # Binding full timestamps fails in MariaDB strict SQL mode (DataError).
+            # Preserve the existing date-granularity contract until a coordinated
+            # Database/API/Coddy migration explicitly introduces time precision.
+            ban_date_value = ban_date.date() if ban_date else None
+            if ban_date_value is None and not allow_incomplete_record:
+                ban_date_value = datetime.now().date()
+            valid_until_value = valid_until.date() if valid_until else None
 
             cursor.execute(
                 """
@@ -5285,7 +5289,7 @@ def registerUserBan(
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 """,
-                (user_id, community_id, ban_date_str, reason, can_appeal, valid_until_str, applied_by_id),
+                (user_id, community_id, ban_date_value, reason, can_appeal, valid_until_value, applied_by_id),
             )
             ban_id = int(cursor.lastrowid)
 
@@ -5299,7 +5303,14 @@ def registerUserBan(
             )
             return ban_id
     except Exception as error:
-        logging.error("Erro ao registrar banimento: %s", type(error).__name__)
+        # Do not log the SQL parameters: they include private moderation reasons.
+        logging.error(
+            "Erro ao registrar banimento: %s (errno=%s, sqlstate=%s, guild_id=%s)",
+            type(error).__name__,
+            getattr(error, "errno", None),
+            getattr(error, "sqlstate", None),
+            guild_id,
+        )
         return False
 
 
