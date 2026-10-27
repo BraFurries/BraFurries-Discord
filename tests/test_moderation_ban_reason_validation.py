@@ -21,4 +21,6 @@ def test_reason_validation_handles_empty_and_boundary_values():
     assert not valid_ban_reason("   ")
     assert valid_ban_reason("a")
     assert valid_ban_reason("x" * BAN_REASON_MAX_LENGTH)
+    assert valid_ban_reason("🦊" * BAN_REASON_MAX_LENGTH)
     assert not valid_ban_reason("x" * (BAN_REASON_MAX_LENGTH + 1))
+    assert not valid_ban_reason("🦊" * (BAN_REASON_MAX_LENGTH + 1))
