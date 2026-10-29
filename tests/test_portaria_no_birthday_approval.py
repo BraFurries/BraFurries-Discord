@@ -187,3 +187,11 @@ def test_recent_account_with_provisional_policy_cannot_bypass_temporary_access(m
     context.member.remove_roles.assert_not_awaited()
     context.routing.assert_not_awaited()
     assert "acesso provisório" in context.interaction.followup.send.await_args.kwargs["content"]
+
+
+def test_portaria_decision_requires_clarification_closed(monkeypatch):
+    ctx = build_approval(monkeypatch)
+    monkeypatch.setattr(portaria_views, "has_active_ticket", lambda *_: True)
+    decide(ctx)
+    ctx.decision_record.assert_not_called()
+    assert "Encerre-o antes" in ctx.interaction.response.send_message.await_args.kwargs["content"]
