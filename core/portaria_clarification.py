@@ -65,6 +65,28 @@ async def _existing_channel(
                 None)
 
 
+async def _ensure_ticket_introduction(
+    channel: discord.TextChannel, *, bot_id: int, ticket_id: int,
+    submission_id: int, applicant: discord.Member,
+    view: discord.ui.View,
+) -> None:
+    """Avoid mentioning the applicant twice after a Discord/SQL timeout."""
+    marker = f"atendimento **#{ticket_id}**"
+    async for message in channel.history(limit=100):
+        if (message.author.id == bot_id and marker in (message.content or "")):
+            return
+
+    await channel.send(
+        f"{applicant.mention}, a equipe da Portaria deseja conversar com você. "
+        f"Este é o atendimento **#{ticket_id}**, vinculado à ficha "
+        f"**#{submission_id}**. Responda neste canal privado; "
+        "a ficha original continua pendente.",
+        view=view,
+        allowed_mentions=discord.AllowedMentions(
+            everyone=False, roles=False, users=[applicant]),
+    )
+
+
 class PortariaClarificationReasonModal(
     discord.ui.Modal, title="Solicitar esclarecimentos"
 ):
@@ -186,16 +208,12 @@ class PortariaClarificationReasonModal(
             if not remember_channel(ticket_id, guild.id, channel.id):
                 raise RuntimeError("Falha ao registrar o canal privado do atendimento.")
             view = PortariaClarificationCloseView(ticket_id)
-            # Tag the candidate in the private ticket, where the candidate
-            # actually has access and Discord can deliver the mention.
-            await channel.send(
-                f"{applicant.mention}, a equipe da Portaria deseja conversar com você. "
-                f"Este é o atendimento **#{ticket_id}**, vinculado à ficha "
-                f"**#{self.submission_id}**. Responda neste canal privado; "
-                "a ficha original continua pendente.",
-                view=view,
-                allowed_mentions=discord.AllowedMentions(
-                    everyone=False, roles=False, users=[applicant]),
+            # Tag the candidate inside the private channel, not only the
+            # staff-facing original form. On retry, reuse the original bot
+            # introduction instead of sending another mention.
+            await _ensure_ticket_introduction(
+                channel, bot_id=bot_member.id, ticket_id=ticket_id,
+                submission_id=self.submission_id, applicant=applicant, view=view,
             )
             if not mark_open(ticket_id, guild.id, channel.id):
                 raise RuntimeError("Falha de transição ao registrar o canal do atendimento.")
@@ -218,9 +236,9 @@ class PortariaClarificationReasonModal(
                                 everyone=False, roles=False, users=[applicant]),
                             mention_author=False,
                         )
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                log.warning("Could not annotate original Portaria form guild=%s ticket=%s",
-                            guild.id, ticket_id)
+            except Exception:
+                log.exception("Could not annotate original Portaria form guild=%s ticket=%s",
+                              guild.id, ticket_id)
             await interaction.followup.send(
                 f"Atendimento privado criado: {channel.mention}", ephemeral=True)
         except (discord.Forbidden, discord.NotFound, discord.HTTPException, ValueError, RuntimeError):
