@@ -58,11 +58,23 @@ def test_invalid_reason_is_rejected_without_database_or_discord_write(monkeypatc
         raise AssertionError("Unexpected database operation")
 
     monkeypatch.setattr(database, "pooled_connection", fail)
-    for reason in ["", "   ", "x" * 1025]:
+    for reason in ["", "   ", "x" * 1025, "🦊" * 513]:
         assert database.warnMember(
             1234, SimpleNamespace(id=111), reason,
             SimpleNamespace(id=999),
         ) is False
+
+
+def test_warn_reason_limits_follow_discord_embed_units():
+    valid = database.valid_warning_reason
+    assert valid("x" * 1024)
+    assert valid("🦊" * 512)
+    assert not valid(None)
+    assert not valid("")
+    assert not valid("   ")
+    assert not valid("x" * 1025)
+    assert not valid("🦊" * 513)
+    assert not valid("x" * 1023 + "🦊")
 
 
 def test_import_serializes_lookup_then_binds_date_without_time(monkeypatch):
@@ -169,7 +181,7 @@ def test_import_rejects_invalid_reason_without_database_access(monkeypatch):
         raise AssertionError("Unexpected database operation")
 
     monkeypatch.setattr(database, "pooled_connection", fail)
-    for reason in ["", "   ", "x" * 1025]:
+    for reason in ["", "   ", "x" * 1025, "🦊" * 513]:
         assert database.registerWarnIfAbsent(
             1234, SimpleNamespace(id=111), reason,
             SimpleNamespace(id=999), datetime(2026, 10, 29, 14, 23, 6),
