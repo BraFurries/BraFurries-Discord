@@ -184,7 +184,7 @@ def test_unreconciled_failed_ticket_with_channel_blocks_decision(monkeypatch):
     assert store.has_active_ticket(19, 222)
     sql, params = cursor.calls[0]
     assert "status = 'FAILED' AND discord_channel_id IS NOT NULL" in sql
-    assert params == (19, 222)
+    assert params == (222, 19, 222)
 
 
 def test_failed_ticket_without_channel_can_be_retried(monkeypatch):
@@ -344,3 +344,43 @@ def test_ticket_config_outage_never_removes_existing_portaria_actions(monkeypatc
         return portaria_views.PortariaDecisionView(7, guild_id=222)
     view = asyncio.run(make())
     assert [item.label for item in view.children] == ["Aprovar", "Reprovar"]
+
+
+def test_candidate_mention_is_not_sent_again_on_retry(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from core import portaria_clarification as handler
+
+    async def messages():
+        yield SimpleNamespace(author=SimpleNamespace(id=77),
+                              content="Este é o atendimento **#42**.")
+    channel = SimpleNamespace(history=lambda limit: messages(),
+                              send=AsyncMock())
+    applicant = SimpleNamespace(mention="<@777>")
+    asyncio.run(handler._ensure_ticket_introduction(
+        channel, bot_id=77, ticket_id=42, submission_id=19,
+        applicant=applicant, view=Mock(),
+    ))
+    channel.send.assert_not_awaited()
+
+
+def test_candidate_mention_goes_to_private_ticket_when_not_yet_notified():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from core import portaria_clarification as handler
+
+    async def messages():
+        if False:
+            yield None
+    channel = SimpleNamespace(history=lambda limit: messages(),
+                              send=AsyncMock())
+    applicant = SimpleNamespace(id=777, mention="<@777>")
+    asyncio.run(handler._ensure_ticket_introduction(
+        channel, bot_id=77, ticket_id=42, submission_id=19,
+        applicant=applicant, view=Mock(),
+    ))
+    channel.send.assert_awaited_once()
+    content = channel.send.await_args.args[0]
+    assert "<@777>" in content
+    assert "atendimento **#42**" in content
+    assert channel.send.await_args.kwargs["allowed_mentions"].everyone is False
