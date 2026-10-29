@@ -2000,6 +2000,14 @@ class ModerationCog(commands.Cog):
                 ephemeral=True,
             )
 
+        # Reject before touching Discord: a failed write must never leave
+        # a timeout behind. The column and Discord embed field support 1024.
+        if not motivo or not motivo.strip() or len(motivo) > 1024:
+            return await ctx.response.send_message(
+                content='O motivo do warn deve ter entre 1 e 1024 caracteres.',
+                ephemeral=True,
+            )
+
         mute_member: discord.Member | None = None
         mute_delta: timedelta | None = None
         mute_until: datetime | None = None
