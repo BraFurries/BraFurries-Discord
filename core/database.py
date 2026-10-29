@@ -8466,9 +8466,10 @@ def record_form_decision(submission_id: int, decision: str, decided_by: int) -> 
     with pooled_connection() as cursor:
         cursor.execute(
             """
-            SELECT status
-            FROM form_submissions
-            WHERE id = %s
+            SELECT fs.status, fs.guild_id, fs.user_id, ff.type AS flow_type
+            FROM form_submissions fs
+            INNER JOIN form_flows ff ON ff.id = fs.flow_id
+            WHERE fs.id = %s
             FOR UPDATE
             """,
             (submission_id,),
@@ -8479,23 +8480,23 @@ def record_form_decision(submission_id: int, decision: str, decided_by: int) -> 
         if submission["status"] != "pending":
             raise ValueError("Este envio já foi analisado.")
 
-        # The original submission row is locked both here and in ticket
-        # reservation. Recheck after locking: a prior optimistic Discord
-        # UI check cannot prevent a concurrent ticket from opening.
-        cursor.execute(
-            """
-            SELECT id FROM portaria_clarification_tickets
-            WHERE submission_id = %s
-              AND (status IN ('REQUESTED','OPENING','OPEN','CLOSING')
-                   OR (status = 'FAILED' AND discord_channel_id IS NOT NULL))
-            LIMIT 1
-            """,
-            (submission_id,),
-        )
-        if cursor.fetchone():
-            raise ValueError(
-                "Encerre o ticket de esclarecimento antes de decidir esta ficha."
+        # The form is locked here, and the active slot is unique by
+        # community/guild/applicant. Never block unrelated normal flows.
+        if submission.get("flow_type") == "portaria":
+            cursor.execute(
+                """
+                SELECT id FROM portaria_clarification_tickets
+                WHERE guild_id = %s AND applicant_discord_user_id = %s
+                  AND (status IN ('REQUESTED','OPENING','OPEN','CLOSING')
+                       OR (status = 'FAILED' AND discord_channel_id IS NOT NULL))
+                LIMIT 1
+                """,
+                (submission["guild_id"], submission["user_id"]),
             )
+            if cursor.fetchone():
+                raise ValueError(
+                    "Encerre o ticket de esclarecimento antes de decidir esta ficha."
+                )
 
         cursor.execute(
             """
