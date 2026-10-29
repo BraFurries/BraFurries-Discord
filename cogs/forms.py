@@ -274,7 +274,7 @@ class FormFlowModal(discord.ui.Modal):
                 target_channel.guild.id,
                 target_channel.id,
             )
-            decision_view = build_portaria_view(submission_id)
+            decision_view = build_portaria_view(submission_id, guild_id=target_channel.guild.id)
 
         try:
             sent_message = await target_channel.send(
@@ -1522,7 +1522,7 @@ class FormsCog(commands.Cog):
             if submission_message is not None:
                 try:
                     if expected_status == "pending":
-                        view = build_portaria_view(int(target_submission["id"]))
+                        view = build_portaria_view(int(target_submission["id"]), guild_id=ctx.guild.id)
                         await submission_message.edit(view=view)
                         self.bot.add_view(view, message_id=submission_message.id)
                         fixes_applied.append("botões de aprovação/reprovação restaurados na ficha pendente")
