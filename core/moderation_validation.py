@@ -20,6 +20,17 @@ def valid_ban_reason(reason: str | None) -> bool:
     )
 
 
+def valid_legacy_ban_reason(reason: str | None) -> bool:
+    """Preserve imported Discord bans that predate the short-reason contract.
+
+    Profile synchronization imports existing sanctions; it does not issue a
+    new Discord ban or audit-log message. Its only capacity limit is the
+    persisted VARCHAR(2048), never the new slash-command limit.
+    """
+    return bool(reason and reason.strip()) and len(reason) <= 2048
+
+
+
 def normalize_ban_reason_details(details: str | None) -> str | None:
     """Optional context is private; reject invalid size without truncating."""
     if details is None or not details.strip():
