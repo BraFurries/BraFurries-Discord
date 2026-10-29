@@ -226,7 +226,9 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
             channel = interaction.channel
             applicant = guild.get_member(int(ticket["applicant_discord_user_id"]))
             if applicant is None:
-                applicant = await guild.fetch_member(int(ticket["applicant_discord_user_id"]))
+                # The applicant may have left the guild. Still close the ticket;
+                # the historical Discord overwrite can be revoked by snowflake.
+                applicant = discord.Object(id=int(ticket["applicant_discord_user_id"]))
             # Revoke access without deleting records or changing form decisions.
             await channel.set_permissions(
                 applicant, overwrite=discord.PermissionOverwrite(view_channel=False),
@@ -235,10 +237,15 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
                                reason=f"Encerramento de esclarecimento #{self.ticket_id}")
             if not mark_closed(self.ticket_id, guild.id, interaction.user.id, str(self.reason)):
                 raise RuntimeError("Não foi possível persistir o encerramento")
-            await channel.send(
-                f"Atendimento encerrado por {interaction.user.mention}. "
-                "A decisão sobre a ficha continua pendente.",
-                allowed_mentions=discord.AllowedMentions.none())
+            # A failed informational message must not reverse a committed close.
+            try:
+                await channel.send(
+                    f"Atendimento encerrado por {interaction.user.mention}. "
+                    "A decisão sobre a ficha continua pendente.",
+                    allowed_mentions=discord.AllowedMentions.none())
+            except (discord.Forbidden, discord.HTTPException):
+                log.warning("Closed clarification ticket could not post summary guild=%s ticket=%s",
+                            guild.id, self.ticket_id)
             await interaction.followup.send(
                 "Atendimento encerrado. A Staff pode decidir a ficha original.",
                 ephemeral=True)
