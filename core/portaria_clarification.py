@@ -13,6 +13,7 @@ from core.discord_events import getStaffRoles
 from core.database import get_form_submission
 from core.portaria_clarification_store import (
     reserve_ticket, ticket_settings, get_ticket, list_open_tickets,
+    list_recoverable_tickets,
     claim_open, remember_channel, mark_open, mark_open_failed,
     claim_close, mark_closed, restore_open, reset_missing_open_channel,
 )
@@ -352,6 +353,65 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
                 "Não foi possível concluir o encerramento. A Staff deve "
                 "conferir o canal antes de tentar novamente.",
                 ephemeral=True)
+
+
+
+async def reconcile_incomplete_clarification_tickets(bot: discord.Client) -> None:
+    """Recover already-created channels; never create new ones without Staff action.
+
+    The worker runs in a small bounded batch. It only repairs existing Discord
+    rooms after a partial failure; a missing/unverifiable channel is left for
+    a controlled retry rather than risking a duplicate or privacy leak.
+    """
+    try:
+        candidates = list_recoverable_tickets(limit=8)
+    except Exception:
+        log.exception("Could not scan stranded Portaria clarification tickets")
+        return
+
+    for ticket in candidates:
+        ticket_id = int(ticket["id"])
+        guild_id = int(ticket["guild_id"])
+        guild = bot.get_guild(guild_id)
+        if guild is None:
+            continue
+        try:
+            channel = await _existing_channel(
+                guild, ticket_id, int(ticket["submission_id"]),
+                ticket.get("discord_channel_id"),
+            )
+            if channel is None:
+                continue
+            # Recheck the original ticket state under DB CAS before touching
+            # Discord. A concurrent Staff retry may already own the lease.
+            if not claim_open(ticket_id, guild_id):
+                continue
+            applicant = guild.get_member(int(ticket["applicant_discord_user_id"]))
+            if applicant is None:
+                applicant = await guild.fetch_member(int(ticket["applicant_discord_user_id"]))
+            view = PortariaClarificationCloseView(ticket_id)
+            await _ensure_ticket_introduction(
+                channel,
+                bot_id=int(bot.user.id),
+                ticket_id=ticket_id,
+                submission_id=int(ticket["submission_id"]),
+                applicant=applicant,
+                view=view,
+            )
+            if not remember_channel(ticket_id, guild_id, channel.id):
+                raise RuntimeError("Failed to persist recovered Portaria channel")
+            if not mark_open(ticket_id, guild_id, channel.id):
+                raise RuntimeError("Failed to finalize recovered Portaria ticket")
+            bot.add_view(view)
+            log.info("Recovered Portaria clarification ticket id=%s guild=%s",
+                     ticket_id, guild_id)
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException,
+                ValueError, RuntimeError):
+            log.exception("Portaria clarification recovery deferred guild=%s ticket=%s",
+                          guild_id, ticket_id)
+            # Leaves channel identity preserved; new attempts never duplicate it.
+            mark_open_failed(ticket_id, guild_id, "DISCORD_RECOVERY_ERROR")
+
 
 
 def register_open_clarification_ticket_views(bot: discord.Client) -> None:
