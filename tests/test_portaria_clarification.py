@@ -269,3 +269,78 @@ def test_non_portaria_form_decision_is_unaffected_by_ticket_feature(monkeypatch)
     database.record_form_decision(19, "approved", 888)
     assert all("portaria_clarification_tickets" not in sql for sql, _ in cursor.calls)
     assert any("INSERT INTO form_decisions" in sql for sql, _ in cursor.calls)
+
+
+def test_sync_adds_button_to_legacy_pending_discord_card(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    class FakeChannel:
+        def __init__(self, message):
+            self.fetch_message = AsyncMock(return_value=message)
+
+    submission = {"id": 7, "guild_id": 222, "channel_id": 99, "message_id": 44}
+    message = SimpleNamespace(
+        id=44,
+        components=[SimpleNamespace(children=[
+            SimpleNamespace(custom_id=f"{portaria_views.PORTARIA_APPROVE_PREFIX}7"),
+            SimpleNamespace(custom_id=f"{portaria_views.PORTARIA_REJECT_PREFIX}7"),
+        ])],
+        edit=AsyncMock(),
+    )
+    channel = FakeChannel(message)
+    guild = SimpleNamespace(get_channel=lambda _: channel)
+    bot = SimpleNamespace(get_guild=lambda _: guild, add_view=Mock())
+    monkeypatch.setattr(portaria_views, "list_pending_portaria_submissions",
+                        lambda: [submission])
+    monkeypatch.setattr(portaria_views.discord, "TextChannel", FakeChannel)
+    monkeypatch.setattr(portaria_views, "ticket_settings",
+                        lambda _: {"clarification_tickets_enabled": 1})
+    next_offset = asyncio.run(
+        portaria_views.sync_pending_portaria_clarification_buttons(bot, limit=1))
+    assert next_offset == 0
+    message.edit.assert_awaited_once()
+    view = message.edit.await_args.kwargs["view"]
+    assert [item.label for item in view.children] == [
+        "Aprovar", "Reprovar", "Solicitar esclarecimentos"]
+    bot.add_view.assert_called_once_with(view, message_id=44)
+
+
+def test_sync_removes_disabled_ticket_button_from_existing_card(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    class FakeChannel:
+        def __init__(self, message):
+            self.fetch_message = AsyncMock(return_value=message)
+
+    submission = {"id": 7, "guild_id": 222, "channel_id": 99, "message_id": 44}
+    message = SimpleNamespace(
+        id=44,
+        components=[SimpleNamespace(children=[
+            SimpleNamespace(custom_id=f"{portaria_views.PORTARIA_APPROVE_PREFIX}7"),
+            SimpleNamespace(custom_id=f"{portaria_views.PORTARIA_REJECT_PREFIX}7"),
+            SimpleNamespace(custom_id="portaria_clarification_open:7"),
+        ])],
+        edit=AsyncMock(),
+    )
+    bot = SimpleNamespace(
+        get_guild=lambda _: SimpleNamespace(get_channel=lambda _: FakeChannel(message)),
+        add_view=Mock(),
+    )
+    monkeypatch.setattr(portaria_views, "list_pending_portaria_submissions",
+                        lambda: [submission])
+    monkeypatch.setattr(portaria_views.discord, "TextChannel", FakeChannel)
+    monkeypatch.setattr(portaria_views, "ticket_settings",
+                        lambda _: {"clarification_tickets_enabled": 0})
+    asyncio.run(portaria_views.sync_pending_portaria_clarification_buttons(bot))
+    view = message.edit.await_args.kwargs["view"]
+    assert [item.label for item in view.children] == ["Aprovar", "Reprovar"]
+
+
+def test_ticket_config_outage_never_removes_existing_portaria_actions(monkeypatch):
+    def unavailable(_):
+        raise ConnectionError("db unavailable")
+    monkeypatch.setattr(portaria_views, "ticket_settings", unavailable)
+    async def make():
+        return portaria_views.PortariaDecisionView(7, guild_id=222)
+    view = asyncio.run(make())
+    assert [item.label for item in view.children] == ["Aprovar", "Reprovar"]
