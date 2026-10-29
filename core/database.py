@@ -5237,10 +5237,24 @@ def registerUserBan(
     *,
     valid_until: datetime | None,
     can_appeal: bool,
+    reason_details: str | None = None,
     ban_date: datetime | None = None,
     allow_incomplete_record: bool = False,
 ) -> int | None:
     """Register one administrative ban and membership flag atomically."""
+    # Validate at the persistence boundary as well as at the slash command.
+    # Imports/legacy callers may omit private context; blank detail maps to NULL.
+    from core.moderation_validation import (
+        normalize_ban_reason_details, valid_ban_reason,
+    )
+    if not valid_ban_reason(reason):
+        logging.warning("Ban rejected: invalid public reason (guild_id=%s)", guild_id)
+        return False
+    try:
+        private_details = normalize_ban_reason_details(reason_details)
+    except ValueError:
+        logging.warning("Ban rejected: invalid private details (guild_id=%s)", guild_id)
+        return False
     try:
         with pooled_connection() as cursor:
             user_id = includeUser(discord_user, guild_id)
@@ -5282,14 +5296,15 @@ def registerUserBan(
                     community_id,
                     date,
                     reason,
+                    reason_details,
                     can_appeal,
                     valid_until,
                     applied_by,
                     registered_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 """,
-                (user_id, community_id, ban_date_value, reason, can_appeal, valid_until_value, applied_by_id),
+                (user_id, community_id, ban_date_value, reason, private_details, can_appeal, valid_until_value, applied_by_id),
             )
             ban_id = int(cursor.lastrowid)
 
