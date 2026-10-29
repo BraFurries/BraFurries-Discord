@@ -359,10 +359,10 @@ def test_register_ban_binds_date_objects_instead_of_full_timestamps(monkeypatch)
     assert "INSERT INTO user_bans" in sql
     assert params == (
         10, 77, date(2026, 10, 27), "violação de regra",
-        True, date(2026, 11, 1), 99,
+        None, True, date(2026, 11, 1), 99,
     )
     assert type(params[2]) is date
-    assert type(params[5]) is date
+    assert type(params[6]) is date
     assert any(
         "UPDATE user_community_status" in statement and bound == (10, 77)
         for statement, bound in cursor.executed
@@ -388,7 +388,8 @@ def test_register_permanent_ban_uses_today_date_and_null_expiration(monkeypatch)
     params = next(bound for sql, bound in cursor.executed if "INSERT INTO user_bans" in sql)
     assert type(params[2]) is date
     assert start_date <= params[2] <= datetime.now().date()
-    assert params[5] is None
+    assert params[4] is None  # optional reason_details
+    assert params[6] is None  # permanent ban
 
 
 def test_ban_dataerror_logs_only_safe_diagnostic_metadata(monkeypatch, caplog):
@@ -419,3 +420,59 @@ def test_ban_dataerror_logs_only_safe_diagnostic_metadata(monkeypatch, caplog):
     assert "sqlstate=22007" in caplog.text
     assert "guild_id=1234" in caplog.text
     assert "private moderation reason" not in caplog.text
+
+
+def test_private_ban_details_are_persisted_only_for_requested_tenant(monkeypatch):
+    cursor = CapturedBanCursor()
+
+    @contextmanager
+    def fake_pooled_connection():
+        yield cursor
+
+    monkeypatch.setattr(database, "pooled_connection", fake_pooled_connection)
+    monkeypatch.setattr(
+        database, "includeUser",
+        lambda user, _guild: 10 if user.id == 111 else 99,
+    )
+    reason = "Violação das regras."
+    details = "Contexto reservado. Pessoas envolvidas e evidências."
+    assert database.registerUserBan(
+        1234, SimpleNamespace(id=111), reason, SimpleNamespace(id=999),
+        valid_until=None, can_appeal=True, reason_details=details,
+    ) == 456
+    sql, params = next(
+        (sql, params) for sql, params in cursor.executed
+        if "INSERT INTO user_bans" in sql
+    )
+    assert "reason_details" in sql
+    assert params[0:2] == (10, 77)
+    assert params[3:6] == (reason, details, True)
+    assert not any(
+        details in str(params) for sql, params in cursor.executed
+        if "UPDATE user_community_status" in sql
+    )
+
+
+def test_invalid_private_ban_details_do_not_write_or_log_sensitive_text(monkeypatch, caplog):
+    def fail(*_args, **_kwargs):
+        raise AssertionError("No database operation expected")
+
+    monkeypatch.setattr(database, "pooled_connection", fail)
+    private_details = "evidence-private-" + "x" * 2050
+    assert database.registerUserBan(
+        1234, SimpleNamespace(id=111), "Regra", SimpleNamespace(id=999),
+        valid_until=None, can_appeal=False, reason_details=private_details,
+    ) is False
+    assert private_details not in caplog.text
+    assert "guild_id=1234" in caplog.text
+
+
+def test_invalid_public_ban_reason_fails_before_any_database_effect(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise AssertionError("No database operation expected")
+
+    monkeypatch.setattr(database, "pooled_connection", fail)
+    assert database.registerUserBan(
+        1234, SimpleNamespace(id=111), "é" * 100, SimpleNamespace(id=999),
+        valid_until=None, can_appeal=False,
+    ) is False
