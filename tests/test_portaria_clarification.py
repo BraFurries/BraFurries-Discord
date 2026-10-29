@@ -160,3 +160,65 @@ def test_failed_ticket_without_channel_can_be_retried(monkeypatch):
     sql, params = cursor.calls[0]
     assert "status IN ('REQUESTED','FAILED')" in sql
     assert params == (42, 222)
+
+
+def test_missing_saved_channel_is_reset_with_compare_and_swap(monkeypatch):
+    cursor = Cursor()
+    patch_db(monkeypatch, cursor)
+    assert store.reset_missing_open_channel(42, 222, 999)
+    sql, params = cursor.calls[0]
+    assert "status = 'OPEN'" in sql
+    assert "discord_channel_id = %s" in sql
+    assert "discord_channel_id = NULL" in sql
+    assert params == (42, 222, 999)
+
+
+def test_channel_recovery_never_trusts_another_guild_or_topic(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from core import portaria_clarification as handler
+
+    class FakeTextChannel:
+        def __init__(self, topic, guild_id):
+            self.topic = topic
+            self.guild = SimpleNamespace(id=guild_id)
+
+    monkeypatch.setattr(handler.discord, "TextChannel", FakeTextChannel)
+    ticket_topic = handler._ticket_topic(42, 19)
+    wrong_channel = FakeTextChannel("unrelated ticket", 222)
+    guild = SimpleNamespace(
+        id=222,
+        get_channel=lambda _: wrong_channel,
+        fetch_channel=AsyncMock(),
+        text_channels=[FakeTextChannel(ticket_topic, 222)],
+        fetch_channels=AsyncMock(return_value=[]),
+    )
+
+    with pytest.raises(ValueError, match="não corresponde"):
+        asyncio.run(handler._existing_channel(guild, 42, 19, 999))
+    guild.fetch_channel.assert_not_awaited()
+    guild.fetch_channels.assert_not_awaited()
+
+
+def test_channel_recovery_uses_discord_list_if_saved_channel_was_deleted(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from core import portaria_clarification as handler
+
+    class FakeTextChannel:
+        def __init__(self, topic, guild_id):
+            self.topic = topic
+            self.guild = SimpleNamespace(id=guild_id)
+
+    monkeypatch.setattr(handler.discord, "TextChannel", FakeTextChannel)
+    matched = FakeTextChannel(handler._ticket_topic(42, 19), 222)
+    guild = SimpleNamespace(
+        id=222,
+        get_channel=lambda _: None,
+        fetch_channel=AsyncMock(side_effect=handler.discord.NotFound(
+            Mock(status=404, reason="Not Found"), "gone")),
+        text_channels=[],
+        fetch_channels=AsyncMock(return_value=[matched]),
+    )
+    assert asyncio.run(handler._existing_channel(guild, 42, 19, 999)) is matched
+    guild.fetch_channels.assert_awaited_once()
