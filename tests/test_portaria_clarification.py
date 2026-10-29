@@ -132,3 +132,31 @@ def test_normal_form_decision_works_without_active_clarification(monkeypatch):
     database.record_form_decision(19, "approved", 888)
     assert any("INSERT INTO form_decisions" in sql for sql, _ in cursor.calls)
     assert any("UPDATE form_submissions" in sql for sql, _ in cursor.calls)
+
+
+def test_created_channel_is_recorded_before_discord_message_is_posted(monkeypatch):
+    cursor = Cursor()
+    patch_db(monkeypatch, cursor)
+    assert store.remember_channel(42, 222, 999)
+    sql, params = cursor.calls[0]
+    assert "discord_channel_id = %s" in sql
+    assert "status = 'OPENING'" in sql
+    assert params == (999, 42, 222, 999)
+
+
+def test_unreconciled_failed_ticket_with_channel_blocks_decision(monkeypatch):
+    cursor = Cursor([{"id": 42}])
+    patch_db(monkeypatch, cursor)
+    assert store.has_active_ticket(19, 222)
+    sql, params = cursor.calls[0]
+    assert "status = 'FAILED' AND discord_channel_id IS NOT NULL" in sql
+    assert params == (19, 222)
+
+
+def test_failed_ticket_without_channel_can_be_retried(monkeypatch):
+    cursor = Cursor()
+    patch_db(monkeypatch, cursor)
+    assert store.claim_open(42, 222)
+    sql, params = cursor.calls[0]
+    assert "status IN ('REQUESTED','FAILED')" in sql
+    assert params == (42, 222)
