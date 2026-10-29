@@ -1,17 +1,29 @@
-"""Pure moderation-input validations; no Discord or database side effects."""
+"""Side-effect-free validation for one ban's public reason and private details."""
 
-# Discord embed field.value accepts up to 1024 UTF-16 code units; the
-# persistence column deliberately has a larger capacity (VARCHAR(2048)).
-BAN_REASON_MAX_LENGTH = 1024
+from urllib.parse import quote
+
+# X-Audit-Log-Reason accepts <= 512 URL-encoded UTF-8 characters.
+# No prefixes/truncation may be added downstream. Embed fields support 1024.
+BAN_REASON_MAX_LENGTH = 512
+BAN_REASON_DETAILS_MAX_LENGTH = 2048
 
 
-def discord_embed_text_length(value: str) -> int:
-    """Count Discord-compatible string units, including astral emoji pairs."""
-    return len(value.encode("utf-16-le")) // 2
+def audit_reason_encoded_length(reason: str) -> int:
+    """Conservatively count URL-encoded UTF-8 characters for Discord audit logs."""
+    return len(quote(reason, safe=""))
 
 
 def valid_ban_reason(reason: str | None) -> bool:
-    """Ensure the complete reason fits the ban and identity-propagation logs."""
+    """A nonblank reason must fit BOTH the audit log and normal Discord embeds."""
     return bool(reason and reason.strip()) and (
-        discord_embed_text_length(reason) <= BAN_REASON_MAX_LENGTH
+        audit_reason_encoded_length(reason) <= BAN_REASON_MAX_LENGTH
     )
+
+
+def normalize_ban_reason_details(details: str | None) -> str | None:
+    """Optional context is private; reject invalid size without truncating."""
+    if details is None or not details.strip():
+        return None
+    if len(details) > BAN_REASON_DETAILS_MAX_LENGTH:
+        raise ValueError("ban reason details exceed 2048 characters")
+    return details
