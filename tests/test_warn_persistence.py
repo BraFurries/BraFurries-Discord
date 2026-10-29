@@ -83,6 +83,9 @@ def test_import_serializes_lookup_then_binds_date_without_time(monkeypatch):
     assert "FOR UPDATE" in statements[1]
     assert statements.index(next(s for s in statements if "FOR UPDATE" in s)) < (
         next(i for i, s in enumerate(statements) if "INSERT INTO user_warnings" in s))
+    warn_lookup_sql = next(sql for sql, _ in cursor.calls
+                           if "SELECT id FROM user_warnings" in sql)
+    assert "FOR UPDATE" in warn_lookup_sql
     lookup = next(params for sql, params in cursor.calls
                   if "SELECT id FROM user_warnings" in sql)
     inserted = next(params for sql, params in cursor.calls
