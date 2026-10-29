@@ -1574,7 +1574,7 @@ class FormsCog(commands.Cog):
 
 @app_commands.context_menu(name="Esclarecer ficha da Portaria")
 async def clarify_existing_portaria_form(
-    self, ctx: Interaction, message: discord.Message
+    ctx: Interaction, message: discord.Message
 ) -> None:
     """Discord entry point for already-published pending forms after site toggle."""
     if ctx.guild is None or not FormsCog._staff_guard(ctx):
