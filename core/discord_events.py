@@ -182,7 +182,15 @@ async def logIdentityBanPropagation(
         inline=False,
     )
     embed.add_field(name="Ação administrativa", value=f"Ban #{ban_id}", inline=True)
-    embed.add_field(name="Motivo original", value=reason or "N/A", inline=False)
+    # Legacy bans may predate the 512-character audit reason contract and
+    # may hold >1024 UTF-16 units. Do not truncate sensitive evidence into an
+    # invalid embed; the full reason remains in the administrative record.
+    reason_for_embed = reason or "N/A"
+    if len(reason_for_embed.encode("utf-16-le")) // 2 > 1024:
+        reason_for_embed = (
+            f"Motivo legado extenso preservado no historico administrativo (ban #{ban_id})."
+        )
+    embed.add_field(name="Motivo original", value=reason_for_embed, inline=False)
     embed.add_field(
         name="Efeitos Discord",
         value=(
