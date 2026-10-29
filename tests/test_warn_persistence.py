@@ -108,3 +108,69 @@ def test_import_skips_legacy_duplicate_under_lock(monkeypatch):
     )
     assert result == {"created": False, "warningsCount": 2}
     assert not any("INSERT INTO user_warnings" in sql for sql, _ in cursor.calls)
+
+
+def test_manual_repeat_warnings_are_independent_actions(monkeypatch):
+    """The index migration must not be undermined by runtime deduplication."""
+    inserts = []
+    for warning_id in (440, 441):
+        cursor = WarningCursor([
+            {"community_id": 77},
+            {"warnings_count": warning_id - 439},
+            {"warnings_limit": 3},
+        ])
+        cursor.lastrowid = warning_id
+        install_cursor(monkeypatch, cursor)
+        result = database.warnMember(
+            1234, SimpleNamespace(id=111), "Mesma ocorrência descrita",
+            SimpleNamespace(id=999),
+        )
+        assert result["warningId"] == warning_id
+        statements = [sql for sql, _ in cursor.calls]
+        assert not any("SELECT id FROM user_warnings" in sql for sql in statements)
+        inserts.extend(params for sql, params in cursor.calls
+                       if "INSERT INTO user_warnings" in sql)
+
+    assert len(inserts) == 2
+    assert inserts[0] == inserts[1]
+    assert type(inserts[0][2]) is date
+
+
+def test_warn_dataerror_logs_only_sanitized_metadata(monkeypatch, caplog):
+    import mysql.connector
+
+    cursor = WarningCursor([{"community_id": 77}])
+    original_execute = cursor.execute
+
+    def reject_insert(sql, params):
+        if "INSERT INTO user_warnings" in sql:
+            raise mysql.connector.DataError(
+                msg="private moderation explanation must stay secret",
+                errno=1406,
+                sqlstate="22001",
+            )
+        original_execute(sql, params)
+
+    cursor.execute = reject_insert
+    install_cursor(monkeypatch, cursor)
+    assert database.warnMember(
+        1234, SimpleNamespace(id=111), "Motivo privado",
+        SimpleNamespace(id=999),
+    ) is False
+    assert "errno=1406" in caplog.text
+    assert "sqlstate=22001" in caplog.text
+    assert "guild_id=1234" in caplog.text
+    assert "Motivo privado" not in caplog.text
+    assert "private moderation explanation" not in caplog.text
+
+
+def test_import_rejects_invalid_reason_without_database_access(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise AssertionError("Unexpected database operation")
+
+    monkeypatch.setattr(database, "pooled_connection", fail)
+    for reason in ["", "   ", "x" * 1025]:
+        assert database.registerWarnIfAbsent(
+            1234, SimpleNamespace(id=111), reason,
+            SimpleNamespace(id=999), datetime(2026, 10, 29, 14, 23, 6),
+        ) is None
