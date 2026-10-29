@@ -102,6 +102,26 @@ def has_active_ticket(submission_id: int, guild_id: int) -> bool:
         return cursor.fetchone() is not None
 
 
+
+def reset_missing_open_channel(ticket_id: int, guild_id: int, channel_id: int) -> bool:
+    """Mark an OPEN ticket retriable only after Discord confirmed channel absence.
+
+    Keep the ticket row/ID, so the next request cannot create a second ticket
+    for the same form. This is intentionally a compare-and-swap against the
+    exact old Discord channel ID and guild.
+    """
+    with pooled_connection() as cursor:
+        cursor.execute(
+            """UPDATE portaria_clarification_tickets
+               SET status = 'FAILED', discord_channel_id = NULL,
+                   last_error_code = 'CHANNEL_NOT_FOUND',
+                   version = version + 1
+               WHERE id = %s AND guild_id = %s
+                 AND discord_channel_id = %s AND status = 'OPEN'""",
+            (ticket_id, guild_id, channel_id))
+        return cursor.rowcount == 1
+
+
 def claim_open(ticket_id: int, guild_id: int) -> bool:
     """Lease prevents overlapping Discord creates and enables crash recovery."""
     with pooled_connection() as cursor:
