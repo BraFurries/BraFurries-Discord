@@ -143,7 +143,7 @@ def test_claim_open_has_single_operator_lease_with_restart_fallback(monkeypatch)
 def test_decision_database_lock_prevents_ticket_race(monkeypatch):
     """A queued approval cannot bypass an opened ticket after acquiring the form lock."""
     from core import database
-    cursor = Cursor([{"status": "pending"}, {"id": 42}])
+    cursor = Cursor([{"status": "pending", "guild_id": 222, "user_id": 777, "flow_type": "portaria"}, {"id": 42}])
     @contextmanager
     def connection():
         yield cursor
@@ -152,12 +152,13 @@ def test_decision_database_lock_prevents_ticket_race(monkeypatch):
         database.record_form_decision(19, "approved", 888)
     assert "FOR UPDATE" in cursor.calls[0][0]
     assert "portaria_clarification_tickets" in cursor.calls[1][0]
+    assert cursor.calls[1][1] == (222, 777)
     assert all("INSERT INTO form_decisions" not in sql for sql, _ in cursor.calls)
 
 
 def test_normal_form_decision_works_without_active_clarification(monkeypatch):
     from core import database
-    cursor = Cursor([{"status": "pending"}, None])
+    cursor = Cursor([{"status": "pending", "guild_id": 222, "user_id": 777, "flow_type": "portaria"}, None])
     @contextmanager
     def connection():
         yield cursor
@@ -255,3 +256,16 @@ def test_channel_recovery_uses_discord_list_if_saved_channel_was_deleted(monkeyp
     )
     assert asyncio.run(handler._existing_channel(guild, 42, 19, 999)) is matched
     guild.fetch_channels.assert_awaited_once()
+
+
+def test_non_portaria_form_decision_is_unaffected_by_ticket_feature(monkeypatch):
+    from core import database
+    cursor = Cursor([{"status": "pending", "guild_id": 222,
+                      "user_id": 777, "flow_type": "normal"}])
+    @contextmanager
+    def connection():
+        yield cursor
+    monkeypatch.setattr(database, "pooled_connection", connection)
+    database.record_form_decision(19, "approved", 888)
+    assert all("portaria_clarification_tickets" not in sql for sql, _ in cursor.calls)
+    assert any("INSERT INTO form_decisions" in sql for sql, _ in cursor.calls)
