@@ -1140,6 +1140,77 @@ def _build_portaria_decision_embeds(
     return embeds
 
 
+async def sync_pending_portaria_clarification_buttons(
+    bot: discord.Client, *, offset: int = 0, limit: int = 12
+) -> int:
+    """Reconcile existing pending messages with the website's ON/OFF setting.
+
+    Small rotating batches avoid editing every historical Discord card at once.
+    Missing guild, unavailable DB or Discord permissions leave the old message
+    untouched and retry on a later pass. Neither website nor API reads forms.
+    Returns the next offset, so even a large backlog eventually gets scanned.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    if limit < 1:
+        return 0
+    try:
+        pending = list_pending_portaria_submissions()
+    except Exception:
+        logger.exception("Could not list pending Portaria cards for ticket-button sync")
+        return offset
+
+    if not pending:
+        return 0
+    offset %= len(pending)
+    batch = (pending + pending)[offset:offset + min(limit, len(pending))]
+    next_offset = (offset + len(batch)) % len(pending)
+    config_cache: dict[int, bool] = {}
+
+    for form in batch:
+        try:
+            guild_id = int(form["guild_id"])
+            guild = bot.get_guild(guild_id)
+            if guild is None or not form.get("message_id") or not form.get("channel_id"):
+                continue
+            if guild_id not in config_cache:
+                config_cache[guild_id] = bool(
+                    ticket_settings(guild_id).get("clarification_tickets_enabled"))
+            enabled = config_cache[guild_id]
+            channel = guild.get_channel(int(form["channel_id"]))
+            if channel is None:
+                channel = await guild.fetch_channel(int(form["channel_id"]))
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            message = await channel.fetch_message(int(form["message_id"]))
+            ids = {
+                getattr(item, "custom_id", None)
+                for row in message.components
+                for item in getattr(row, "children", ())
+            }
+            submission_id = int(form["id"])
+            # Never replace unrelated / malformed messages.
+            if not {
+                f"{PORTARIA_APPROVE_PREFIX}{submission_id}",
+                f"{PORTARIA_REJECT_PREFIX}{submission_id}",
+            }.issubset(ids):
+                continue
+            has_button = f"portaria_clarification_open:{submission_id}" in ids
+            if has_button == enabled:
+                continue
+            # The member-facing form/decision stays managed by the Coddy.
+            view = PortariaDecisionView(submission_id, guild_id=guild_id)
+            await message.edit(view=view)
+            bot.add_view(view, message_id=message.id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            logger.warning("Cannot sync Portaria clarification button for guild=%s submission=%s",
+                           form.get("guild_id"), form.get("id"))
+        except Exception:
+            logger.exception("Unexpected Portaria ticket-button sync failure guild=%s submission=%s",
+                             form.get("guild_id"), form.get("id"))
+    return next_offset
+
+
 def register_pending_portaria_views(bot: discord.Client) -> None:
     for submission in list_pending_portaria_submissions():
         message_id = submission.get("message_id")
