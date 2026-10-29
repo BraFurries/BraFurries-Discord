@@ -119,6 +119,12 @@ def test_confirmed_account_outside_guild_is_banned_by_snowflake():
     assert guild.member_lookups == []
 
 
+def test_discord_audit_receives_identical_public_reason_for_origin_and_linked():
+    guild = FakeGuild(10)
+    run(guild, identity_summary((1, [111]), (2, [222])))
+    assert [call["reason"] for _, call in guild.ban_calls] == ["regra", "regra"]
+
+
 def test_new_confirmed_identity_extends_existing_ban_without_membership_lookup():
     guild = FakeGuild(10, banned={111})
 
@@ -136,6 +142,7 @@ def test_new_confirmed_identity_extends_existing_ban_without_membership_lookup()
         333: "APPLIED",
     }
     assert [discord_id for discord_id, _ in guild.ban_calls] == [222, 333]
+    assert [call["reason"] for _, call in guild.ban_calls] == ["ban ativo", "ban ativo"]
     assert guild.member_lookups == []
 
 
