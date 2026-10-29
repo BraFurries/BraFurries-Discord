@@ -48,13 +48,23 @@ def reserve_ticket(submission_id: int, guild_id: int, actor_id: int, reason: str
         config = cursor.fetchone()
         if not config or not config.get("clarification_tickets_enabled") or not config.get("clarification_ticket_category_id"):
             raise ValueError("Tickets de esclarecimento não estão habilitados neste servidor.")
+        # The applicant, not a particular form submission, owns the active
+        # ticket slot in this Community/guild. CLOSED records remain history.
         cursor.execute(
-            """SELECT id, status, discord_channel_id, applicant_discord_user_id
+            """SELECT id, submission_id, status, discord_channel_id,
+                      applicant_discord_user_id
                FROM portaria_clarification_tickets
-               WHERE community_id = %s AND submission_id = %s FOR UPDATE""",
-            (form["community_id"], submission_id))
+               WHERE community_id = %s AND guild_id = %s
+                 AND applicant_discord_user_id = %s AND status <> 'CLOSED'
+               ORDER BY id DESC LIMIT 1 FOR UPDATE""",
+            (form["community_id"], guild_id, form["user_id"]))
         existing = cursor.fetchone()
         if existing:
+            if int(existing["submission_id"]) != int(submission_id):
+                raise ValueError(
+                    "Este candidato já possui um atendimento não finalizado "
+                    "em outra ficha deste servidor."
+                )
             return existing
         cursor.execute(
             """INSERT INTO portaria_clarification_tickets
