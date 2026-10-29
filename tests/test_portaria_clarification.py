@@ -449,3 +449,20 @@ def test_public_ticket_channel_is_rejected_before_candidate_notification():
     guild = SimpleNamespace(default_role=object())
     with pytest.raises(ValueError, match="não está privado"):
         handler._assert_channel_is_private(guild, channel)
+
+
+def test_pending_form_lookup_includes_discord_channel_for_button_sync(monkeypatch):
+    """The synchronization worker requires channel_id from the real DB query."""
+    from core import database
+    rows = [{"id": 7, "guild_id": 222, "channel_id": 99, "message_id": 44}]
+    cursor = Cursor()
+    cursor.fetchall = lambda: rows
+    @contextmanager
+    def connection():
+        yield cursor
+    monkeypatch.setattr(database, "pooled_connection", connection)
+    assert database.list_pending_portaria_submissions() == rows
+    sql, _ = cursor.calls[0]
+    assert "fs.channel_id" in sql
+    assert "fs.guild_id" in sql
+    assert "fs.message_id" in sql
