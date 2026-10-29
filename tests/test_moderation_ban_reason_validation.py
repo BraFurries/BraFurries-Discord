@@ -1,7 +1,7 @@
-from core.moderation_validation import BAN_REASON_MAX_LENGTH, valid_ban_reason
+from core.moderation_validation import (BAN_REASON_MAX_LENGTH, discord_embed_text_length, valid_ban_reason)
 
 
-def test_detailed_reason_from_moderation_incident_fits_expanded_capacity():
+def test_detailed_reason_fits_discord_embed_field():
     reason = (
         "Solicitação de conteúdo íntimo explícito a um menor de 13 anos. "
         "A denúncia também inclui um relato público em vídeo no YouTube "
@@ -15,12 +15,21 @@ def test_detailed_reason_from_moderation_incident_fits_expanded_capacity():
 
 
 def test_reason_validation_handles_empty_and_boundary_values():
-    assert BAN_REASON_MAX_LENGTH == 2048
+    assert BAN_REASON_MAX_LENGTH == 1024
     assert not valid_ban_reason(None)
     assert not valid_ban_reason("")
     assert not valid_ban_reason("   ")
     assert valid_ban_reason("a")
     assert valid_ban_reason("x" * BAN_REASON_MAX_LENGTH)
-    assert valid_ban_reason("🦊" * BAN_REASON_MAX_LENGTH)
+    assert valid_ban_reason("🦊" * (BAN_REASON_MAX_LENGTH // 2))
     assert not valid_ban_reason("x" * (BAN_REASON_MAX_LENGTH + 1))
-    assert not valid_ban_reason("🦊" * (BAN_REASON_MAX_LENGTH + 1))
+    assert not valid_ban_reason("🦊" * (BAN_REASON_MAX_LENGTH // 2 + 1))
+
+
+def test_discord_embed_length_treats_astral_emoji_as_two_units():
+    assert discord_embed_text_length("a" * 1024) == 1024
+    assert discord_embed_text_length("🦊" * 512) == 1024
+    assert discord_embed_text_length("🦊" * 513) == 1026
+    assert not valid_ban_reason("a" * 1023 + "🦊")
+    # The persistence column is wider than the product/UI contract.
+    assert not valid_ban_reason("x" * 2048)
