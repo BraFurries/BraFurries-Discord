@@ -68,6 +68,7 @@ def build_approval(monkeypatch, *, role_present=True, configured=True, can_manag
     monkeypatch.setattr(portaria_views.discord, "Member", FakeMember)
     monkeypatch.setattr(portaria_views, "getStaffRoles", lambda _guild: [staff_role])
     monkeypatch.setattr(portaria_views, "get_form_submission", lambda _id: submission)
+    monkeypatch.setattr(portaria_views, "has_active_ticket", lambda *_: False)
     monkeypatch.setattr(
         portaria_views, "get_portaria_base_config",
         lambda _guild_id: {"visitante_role_id": 501, "aprovacao_acesso_provisorio_ativo": provisional},
