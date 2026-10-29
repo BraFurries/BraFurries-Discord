@@ -18,6 +18,8 @@ from core.database import (
     rollback_form_decision,
 )
 from core.discord_events import getStaffRoles
+from core.portaria_clarification import PortariaClarificationReasonModal
+from core.portaria_clarification_store import ticket_settings, has_active_ticket
 from core.time_functions import now
 from core.verifications import extract_date_from_text
 
@@ -26,7 +28,7 @@ PORTARIA_APPROVE_PREFIX = "portaria_approve:"
 PORTARIA_REJECT_PREFIX = "portaria_reject:"
 BIRTHDAY_KEYWORDS = ("nascimento", "anivers")
 class PortariaDecisionView(discord.ui.View):
-    def __init__(self, submission_id: int) -> None:
+    def __init__(self, submission_id: int, guild_id: int | None = None) -> None:
         super().__init__(timeout=None)
         self.submission_id = submission_id
 
@@ -44,6 +46,34 @@ class PortariaDecisionView(discord.ui.View):
         reject_button.callback = self._handle_reject
         self.add_item(approve_button)
         self.add_item(reject_button)
+        if guild_id is not None and ticket_settings(guild_id).get("clarification_tickets_enabled"):
+            clarify_button = discord.ui.Button(
+                label="Solicitar esclarecimentos",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"portaria_clarification_open:{submission_id}",
+            )
+            clarify_button.callback = self._handle_clarification
+            self.add_item(clarify_button)
+
+    async def _handle_clarification(self, interaction: discord.Interaction) -> None:
+        staff_roles = getStaffRoles(interaction.guild) if interaction.guild else []
+        member = interaction.user if isinstance(interaction.user, discord.Member) else None
+        if member is None or not any(role in member.roles for role in staff_roles):
+            await interaction.response.send_message(
+                "Apenas a Staff autorizada pode solicitar esclarecimentos.",
+                ephemeral=True)
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("Servidor não encontrado.", ephemeral=True)
+            return
+        submission = get_form_submission(self.submission_id)
+        if (not submission or int(submission.get("guild_id") or 0) != interaction.guild.id
+                or submission.get("status") != "pending"):
+            await interaction.response.send_message(
+                "Ficha não disponível para este servidor.", ephemeral=True)
+            return
+        await interaction.response.send_modal(
+            PortariaClarificationReasonModal(self.submission_id))
 
     async def _handle_approve(self, interaction: discord.Interaction) -> None:
         await self._handle_decision(interaction, "approved")
@@ -83,6 +113,13 @@ class PortariaDecisionView(discord.ui.View):
         if submission["status"] != "pending":
             await interaction.response.send_message(
                 content="Este formulário já foi analisado.",
+                ephemeral=True,
+            )
+            return
+
+        if has_active_ticket(self.submission_id, interaction.guild.id):
+            await interaction.response.send_message(
+                "Existe um ticket de esclarecimento ativo. Encerre-o antes de decidir a ficha.",
                 ephemeral=True,
             )
             return
@@ -1045,8 +1082,10 @@ class FormBirthdayConflictView(discord.ui.View):
 def build_portaria_view(
     submission_id: int,
     disabled: bool = False,
+    *,
+    guild_id: int | None = None,
 ) -> PortariaDecisionView:
-    view = PortariaDecisionView(submission_id)
+    view = PortariaDecisionView(submission_id, guild_id=guild_id)
     if disabled:
         for item in view.children:
             item.disabled = True
@@ -1107,6 +1146,6 @@ def register_pending_portaria_views(bot: discord.Client) -> None:
         if not message_id:
             continue
         try:
-            bot.add_view(PortariaDecisionView(int(submission["id"])), message_id=message_id)
+            bot.add_view(PortariaDecisionView(int(submission["id"]), guild_id=int(submission["guild_id"])), message_id=message_id)
         except Exception:
             continue
