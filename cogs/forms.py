@@ -31,6 +31,8 @@ from core.portaria_views import (
     build_portaria_view,
 )
 from core.time_functions import now
+from core.portaria_clarification import PortariaClarificationReasonModal
+from core.portaria_clarification_store import ticket_settings
 from discord import Interaction, app_commands
 from discord.ext import commands
 import asyncio
@@ -312,6 +314,39 @@ class FormsCog(commands.Cog):
         name="formulario",
         description="Comandos para gerenciar formulários.",
     )
+
+    @app_commands.context_menu(name="Esclarecer ficha da Portaria")
+    async def clarify_existing_portaria_form(
+        self, ctx: Interaction, message: discord.Message
+    ) -> None:
+        """Discord entry point for already-published pending forms after site toggle."""
+        if ctx.guild is None or not self._staff_guard(ctx):
+            await ctx.response.send_message(
+                "Apenas a Staff autorizada pode solicitar esclarecimentos.",
+                ephemeral=True)
+            return
+        if not ticket_settings(ctx.guild.id).get("clarification_tickets_enabled"):
+            await ctx.response.send_message(
+                "Habilite os tickets na configuração da Portaria no site.",
+                ephemeral=True)
+            return
+        submission = get_form_submission_by_message(message.id, ctx.guild.id)
+        if not submission or submission.get("status") != "pending":
+            await ctx.response.send_message(
+                "Esta mensagem não corresponde a uma ficha pendente neste servidor.",
+                ephemeral=True)
+            return
+        try:
+            flow = get_form_flow(ctx.guild.id, int(submission["flow_id"]))
+        except ValueError:
+            flow = None
+        if not flow or flow.get("type") != "portaria":
+            await ctx.response.send_message(
+                "Esta mensagem não corresponde a uma ficha de Portaria.",
+                ephemeral=True)
+            return
+        await ctx.response.send_modal(
+            PortariaClarificationReasonModal(int(submission["id"])))
 
     @staticmethod
     def _parse_questions(questions_raw: str) -> list[dict]:
