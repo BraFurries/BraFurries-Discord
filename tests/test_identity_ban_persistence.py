@@ -476,3 +476,34 @@ def test_invalid_public_ban_reason_fails_before_any_database_effect(monkeypatch)
         1234, SimpleNamespace(id=111), "é" * 100, SimpleNamespace(id=999),
         valid_until=None, can_appeal=False,
     ) is False
+
+
+def test_legacy_discord_ban_import_keeps_long_reason_without_new_audit_effect(monkeypatch):
+    """Legacy /perfil sync must not be blocked by new /ban audit-header limit."""
+    cursor = CapturedBanCursor()
+
+    @contextmanager
+    def fake_pooled_connection():
+        yield cursor
+
+    monkeypatch.setattr(database, "pooled_connection", fake_pooled_connection)
+    monkeypatch.setattr(database, "includeUser", lambda *_: 10)
+    # Legacy audit records can be longer than the newly enforced short /ban field.
+    legacy_reason = "Descrição de ocorrência histórica. " * 26
+    assert len(legacy_reason) <= 2048
+
+    assert database.registerUserBan(
+        1234,
+        SimpleNamespace(id=111),
+        legacy_reason,
+        None,
+        valid_until=None,
+        can_appeal=False,
+        ban_date=datetime(2026, 10, 29, 10, 0, 0),
+        allow_incomplete_record=True,
+    ) == 456
+    params = next(params for sql, params in cursor.executed
+                  if "INSERT INTO user_bans" in sql)
+    assert params[3] == legacy_reason
+    assert params[4] is None
+    assert params[7] is None
