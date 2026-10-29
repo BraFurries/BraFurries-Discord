@@ -69,8 +69,8 @@ def test_reserve_serializes_and_reuses_existing_ticket(monkeypatch):
         {"id": 19, "user_id": 777, "community_id": 3},
         {"clarification_tickets_enabled": 1,
          "clarification_ticket_category_id": 999},
-        {"id": 42, "status": "OPEN", "discord_channel_id": 102,
-         "applicant_discord_user_id": 777},
+        {"id": 42, "submission_id": 19, "status": "OPEN",
+         "discord_channel_id": 102, "applicant_discord_user_id": 777},
     ])
     patch_db(monkeypatch, cursor)
     ticket = store.reserve_ticket(19, 222, 333,
@@ -81,6 +81,39 @@ def test_reserve_serializes_and_reuses_existing_ticket(monkeypatch):
     assert all("INSERT INTO portaria_clarification_tickets" not in sql
                for sql, _ in cursor.calls)
 
+
+
+
+def test_reserve_rejects_second_active_form_for_same_applicant(monkeypatch):
+    cursor = Cursor([
+        {"id": 20, "user_id": 777, "community_id": 3},
+        {"clarification_tickets_enabled": 1,
+         "clarification_ticket_category_id": 999},
+        {"id": 42, "submission_id": 19, "status": "OPEN",
+         "discord_channel_id": 102, "applicant_discord_user_id": 777},
+    ])
+    patch_db(monkeypatch, cursor)
+    with pytest.raises(ValueError, match="outra ficha"):
+        store.reserve_ticket(20, 222, 333, "Outra dúvida sobre o candidato")
+    assert "applicant_discord_user_id = %s" in cursor.calls[2][0]
+    assert cursor.calls[2][1] == (3, 222, 777)
+    assert all("INSERT INTO portaria_clarification_tickets" not in sql
+               for sql, _ in cursor.calls)
+
+
+def test_closed_history_allows_a_second_ticket_same_submission(monkeypatch):
+    cursor = Cursor([
+        {"id": 19, "user_id": 777, "community_id": 3},
+        {"clarification_tickets_enabled": 1,
+         "clarification_ticket_category_id": 999},
+        None,
+    ])
+    patch_db(monkeypatch, cursor)
+    ticket = store.reserve_ticket(19, 222, 333, "Novo esclarecimento após o encerramento")
+    assert ticket["status"] == "REQUESTED"
+    assert ticket["id"] == 42
+    assert "status <> 'CLOSED'" in cursor.calls[2][0]
+    assert "INSERT INTO portaria_clarification_tickets" in cursor.calls[3][0]
 
 def test_disabled_portaria_fails_closed_inside_locked_reservation(monkeypatch):
     cursor = Cursor([
