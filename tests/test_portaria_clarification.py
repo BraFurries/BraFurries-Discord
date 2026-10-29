@@ -105,3 +105,30 @@ def test_claim_open_has_single_operator_lease_with_restart_fallback(monkeypatch)
     assert not store.claim_open(42, 222)
 
 
+
+
+def test_decision_database_lock_prevents_ticket_race(monkeypatch):
+    """A queued approval cannot bypass an opened ticket after acquiring the form lock."""
+    from core import database
+    cursor = Cursor([{"status": "pending"}, {"id": 42}])
+    @contextmanager
+    def connection():
+        yield cursor
+    monkeypatch.setattr(database, "pooled_connection", connection)
+    with pytest.raises(ValueError, match="Encerre o ticket"):
+        database.record_form_decision(19, "approved", 888)
+    assert "FOR UPDATE" in cursor.calls[0][0]
+    assert "portaria_clarification_tickets" in cursor.calls[1][0]
+    assert all("INSERT INTO form_decisions" not in sql for sql, _ in cursor.calls)
+
+
+def test_normal_form_decision_works_without_active_clarification(monkeypatch):
+    from core import database
+    cursor = Cursor([{"status": "pending"}, None])
+    @contextmanager
+    def connection():
+        yield cursor
+    monkeypatch.setattr(database, "pooled_connection", connection)
+    database.record_form_decision(19, "approved", 888)
+    assert any("INSERT INTO form_decisions" in sql for sql, _ in cursor.calls)
+    assert any("UPDATE form_submissions" in sql for sql, _ in cursor.calls)
