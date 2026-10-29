@@ -5685,6 +5685,7 @@ def registerWarnIfAbsent(
             """
             SELECT id FROM user_warnings
             WHERE user_id = %s AND community_id = %s AND reason = %s AND date = %s
+            FOR UPDATE
             """,
             (user_id, community_id, reason, warning_day),
         )
