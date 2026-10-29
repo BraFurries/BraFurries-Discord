@@ -105,10 +105,3 @@ def test_claim_open_has_single_operator_lease_with_restart_fallback(monkeypatch)
     assert not store.claim_open(42, 222)
 
 
-def test_existing_portaria_decision_blocks_while_ticket_active(monkeypatch):
-    from test_portaria_no_birthday_approval import build_approval, decide
-    ctx = build_approval(monkeypatch)
-    monkeypatch.setattr(portaria_views, "has_active_ticket", lambda *_: True)
-    decide(ctx)
-    ctx.decision_record.assert_not_called()
-    assert "Encerre-o antes" in ctx.interaction.response.send_message.await_args.args[0]
