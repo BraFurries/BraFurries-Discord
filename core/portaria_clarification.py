@@ -42,9 +42,17 @@ async def _existing_channel(
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
     topic = _ticket_topic(ticket_id, submission_id)
-    # Recovery after Discord has created the channel but SQL commit failed.
-    return next((channel for channel in guild.text_channels
-                 if channel.topic == topic), None)
+    # Recovery after Discord created a channel but its HTTP response was lost.
+    # The gateway cache can be stale; consult Discord before ever creating
+    # another channel for the same durable ticket ID.
+    cached = next((channel for channel in guild.text_channels
+                   if channel.topic == topic), None)
+    if cached is not None:
+        return cached
+    channels = await guild.fetch_channels()
+    return next((channel for channel in channels
+                 if isinstance(channel, discord.TextChannel) and channel.topic == topic),
+                None)
 
 
 class PortariaClarificationReasonModal(
