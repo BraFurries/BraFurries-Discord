@@ -8479,6 +8479,23 @@ def record_form_decision(submission_id: int, decision: str, decided_by: int) -> 
         if submission["status"] != "pending":
             raise ValueError("Este envio já foi analisado.")
 
+        # The original submission row is locked both here and in ticket
+        # reservation. Recheck after locking: a prior optimistic Discord
+        # UI check cannot prevent a concurrent ticket from opening.
+        cursor.execute(
+            """
+            SELECT id FROM portaria_clarification_tickets
+            WHERE submission_id = %s
+              AND status IN ('REQUESTED','OPENING','OPEN','CLOSING')
+            LIMIT 1
+            """,
+            (submission_id,),
+        )
+        if cursor.fetchone():
+            raise ValueError(
+                "Encerre o ticket de esclarecimento antes de decidir esta ficha."
+            )
+
         cursor.execute(
             """
             INSERT INTO form_decisions (submission_id, decision, decided_by)
