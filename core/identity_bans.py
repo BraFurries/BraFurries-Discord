@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import discord
 
 from core.identity_api import IdentitySummary
+from core.moderation_validation import valid_ban_reason
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,19 @@ def _error_effect(
         outcome,
         type(error).__name__[:64],
     )
+
+
+def _audit_reason_for_propagation(reason: str) -> str:
+    """Keep new short reasons unchanged; protect enforcement of older bans.
+
+    Older reasons may exceed Discord's URL-encoded 512-character audit limit.
+    Preserve the complete administrative reason in the original DB record,
+    rather than making the new Discord ban fail or silently truncating it.
+    """
+    if valid_ban_reason(reason):
+        return reason
+    return "Banimento legado; motivo completo no historico administrativo."
+
 
 
 def _ordered_candidates(
@@ -106,16 +120,12 @@ async def propagate_confirmed_ban(
             )
             continue
 
-        audit_reason = reason
-        if not is_origin:
-            audit_reason = (
-                f"[Propagado por identidade confirmada; origem Discord "
-                f"{origin_discord_id}] {reason}"
-            )
+        # The same public reason is persisted, logged and sent to the Discord
+        # audit log. No prefix and no silent truncation for linked identities.
         try:
             await guild.ban(
                 target,
-                reason=audit_reason[:512],
+                reason=_audit_reason_for_propagation(reason),
                 delete_message_seconds=delete_message_seconds if is_origin else 0,
             )
         except Exception as error:
@@ -168,10 +178,7 @@ async def propagate_new_confirmed_identity_ban(
         try:
             await guild.ban(
                 target,
-                reason=(
-                    "[Propagação automática após confirmação de identidade] "
-                    + reason
-                )[:512],
+                reason=_audit_reason_for_propagation(reason),
                 delete_message_seconds=0,
             )
         except Exception as error:

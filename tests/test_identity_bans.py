@@ -119,6 +119,12 @@ def test_confirmed_account_outside_guild_is_banned_by_snowflake():
     assert guild.member_lookups == []
 
 
+def test_discord_audit_receives_identical_public_reason_for_origin_and_linked():
+    guild = FakeGuild(10)
+    run(guild, identity_summary((1, [111]), (2, [222])))
+    assert [call["reason"] for _, call in guild.ban_calls] == ["regra", "regra"]
+
+
 def test_new_confirmed_identity_extends_existing_ban_without_membership_lookup():
     guild = FakeGuild(10, banned={111})
 
@@ -136,7 +142,35 @@ def test_new_confirmed_identity_extends_existing_ban_without_membership_lookup()
         333: "APPLIED",
     }
     assert [discord_id for discord_id, _ in guild.ban_calls] == [222, 333]
+    assert [call["reason"] for _, call in guild.ban_calls] == ["ban ativo", "ban ativo"]
     assert guild.member_lookups == []
+
+
+def test_legacy_long_reason_uses_safe_audit_summary_on_new_identity():
+    guild = FakeGuild(10, banned={111})
+    legacy_reason = "Violação histórica muito detalhada. " * 30
+    assert len(legacy_reason) < 2048
+
+    effects = asyncio.run(
+        propagate_new_confirmed_identity_ban(
+            guild, [(1, 111), (2, 222)], reason=legacy_reason,
+        )
+    )
+    assert outcomes(effects)[222] == "APPLIED"
+    audit_reason = guild.ban_calls[0][1]["reason"]
+    assert audit_reason == "Banimento legado; motivo completo no historico administrativo."
+    assert legacy_reason not in audit_reason
+
+
+def test_encoded_long_legacy_reason_uses_safe_audit_summary():
+    guild = FakeGuild(10, banned={111})
+    effects = asyncio.run(
+        propagate_new_confirmed_identity_ban(
+            guild, [(1, 111), (2, 222)], reason="🦊" * 50,
+        )
+    )
+    assert outcomes(effects)[222] == "APPLIED"
+    assert guild.ban_calls[0][1]["reason"].startswith("Banimento legado;")
 
 
 def test_origin_discord_id_must_belong_to_requested_identity():

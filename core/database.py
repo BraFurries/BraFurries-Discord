@@ -5151,12 +5151,23 @@ def deleteTempRole(tempRoleDBId:int):
             )
             return False
 
+def valid_warning_reason(reason: str | None) -> bool:
+    """Accept only complete Discord embed-field-compatible moderation reasons."""
+    return bool(reason and reason.strip()) and (
+        len(reason.encode("utf-16-le")) // 2 <= 1024
+    )
+
+
 def warnMember(
     guild_id: int,
     discord_user: Union[discord.Member, discord.User],
     reason: str,
     applied_by: discord.Member,
 ):
+    # Validate before any database write. Do not truncate moderation evidence.
+    if not valid_warning_reason(reason):
+        logger.warning("Warn não registrado: tamanho de motivo inválido (guild_id=%s)", guild_id)
+        return False
     try:
         user_id = includeUser(discord_user, guild_id)
         applied_by_id = includeUser(applied_by, guild_id)
@@ -5172,7 +5183,8 @@ def warnMember(
                     f"Comunidade do servidor {guild_id} não encontrada ao registrar warn"
                 )
             community_id = community_row["community_id"]
-            warning_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # user_warnings.date is DATE (not DATETIME) in the canonical schema.
+            warning_date = datetime.now().date()
 
             cursor.execute(
                 """
@@ -5223,8 +5235,12 @@ def warnMember(
             }
     except Exception as error:
         logger.error(
-            'Falha ao registrar advertência no banco (tipo=%s)',
+            'Falha ao registrar advertência no banco '
+            '(tipo=%s, errno=%s, sqlstate=%s, guild_id=%s)',
             type(error).__name__,
+            getattr(error, "errno", None),
+            getattr(error, "sqlstate", None),
+            guild_id,
         )
         return False
 
@@ -5237,10 +5253,31 @@ def registerUserBan(
     *,
     valid_until: datetime | None,
     can_appeal: bool,
+    reason_details: str | None = None,
     ban_date: datetime | None = None,
     allow_incomplete_record: bool = False,
 ) -> int | None:
     """Register one administrative ban and membership flag atomically."""
+    # Validate at the persistence boundary as well as at the slash command.
+    # Imports/legacy callers may omit private context; blank detail maps to NULL.
+    from core.moderation_validation import (
+        normalize_ban_reason_details, valid_ban_reason, valid_legacy_ban_reason,
+    )
+    # /ban must fit the native Discord audit log. Historical ban synchronization
+    # can preserve a longer reason because it does not apply another ban effect.
+    reason_is_valid = (
+        valid_legacy_ban_reason(reason)
+        if allow_incomplete_record
+        else valid_ban_reason(reason)
+    )
+    if not reason_is_valid:
+        logging.warning("Ban rejected: invalid reason (guild_id=%s)", guild_id)
+        return False
+    try:
+        private_details = normalize_ban_reason_details(reason_details)
+    except ValueError:
+        logging.warning("Ban rejected: invalid private details (guild_id=%s)", guild_id)
+        return False
     try:
         with pooled_connection() as cursor:
             user_id = includeUser(discord_user, guild_id)
@@ -5266,10 +5303,14 @@ def registerUserBan(
                 return False
 
             community_id = community_row["community_id"]
-            ban_date_str = ban_date.strftime('%Y-%m-%d %H:%M:%S') if ban_date else None
-            if not ban_date_str and not allow_incomplete_record:
-                ban_date_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            valid_until_str = valid_until.strftime('%Y-%m-%d %H:%M:%S') if valid_until else None
+            # The current Flyway baseline defines both fields as DATE, not DATETIME.
+            # Binding full timestamps fails in MariaDB strict SQL mode (DataError).
+            # Preserve the existing date-granularity contract until a coordinated
+            # Database/API/Coddy migration explicitly introduces time precision.
+            ban_date_value = ban_date.date() if ban_date else None
+            if ban_date_value is None and not allow_incomplete_record:
+                ban_date_value = datetime.now().date()
+            valid_until_value = valid_until.date() if valid_until else None
 
             cursor.execute(
                 """
@@ -5278,14 +5319,15 @@ def registerUserBan(
                     community_id,
                     date,
                     reason,
+                    reason_details,
                     can_appeal,
                     valid_until,
                     applied_by,
                     registered_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 """,
-                (user_id, community_id, ban_date_str, reason, can_appeal, valid_until_str, applied_by_id),
+                (user_id, community_id, ban_date_value, reason, private_details, can_appeal, valid_until_value, applied_by_id),
             )
             ban_id = int(cursor.lastrowid)
 
@@ -5299,7 +5341,14 @@ def registerUserBan(
             )
             return ban_id
     except Exception as error:
-        logging.error("Erro ao registrar banimento: %s", type(error).__name__)
+        # Do not log the SQL parameters: they include private moderation reasons.
+        logging.error(
+            "Erro ao registrar banimento: %s (errno=%s, sqlstate=%s, guild_id=%s)",
+            type(error).__name__,
+            getattr(error, "errno", None),
+            getattr(error, "sqlstate", None),
+            guild_id,
+        )
         return False
 
 
@@ -5638,11 +5687,16 @@ def registerWarnIfAbsent(
     applied_by: discord.Member | discord.User | None,
     warn_date: datetime,
 ) -> dict | None:
-    """Register a warn only if it has not been stored already.
+    """Import only when no same-day, same-reason warning already exists.
 
-    A warn is considered a duplicate when another entry exists for the same
-    member, community, reason and timestamp.
+    The parent user row is locked before lookup+insert to serialize concurrent
+    imports without blocking legitimate independent /warn commands. This
+    retains historical DATE-granularity import semantics even after dropping
+    the legacy unique_warning key.
     """
+    if not valid_warning_reason(reason):
+        logging.warning("Importação de warn rejeitada: motivo inválido (guild=%s)", guild_id)
+        return None
 
     with pooled_connection() as cursor:
         user_id = includeUser(discord_user, guild_id)
@@ -5660,13 +5714,20 @@ def registerWarnIfAbsent(
             return None
 
         community_id = row["community_id"]
+        warning_day = warn_date.date()
+        # SELECT/INSERT is protected by an existing parent row lock; no
+        # extra DDL or unique constraint on the human-readable reason.
+        cursor.execute("SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,))
+        if cursor.fetchone() is None:
+            raise LookupError("Usuário inexistente para importação de warn")
 
         cursor.execute(
             """
             SELECT id FROM user_warnings
             WHERE user_id = %s AND community_id = %s AND reason = %s AND date = %s
+            FOR UPDATE
             """,
-            (user_id, community_id, reason, warn_date),
+            (user_id, community_id, reason, warning_day),
         )
 
         if cursor.fetchone():
@@ -5687,7 +5748,7 @@ def registerWarnIfAbsent(
                 INSERT INTO user_warnings (user_id, community_id, date, reason, expired, applied_by)
                 VALUES (%s, %s, %s, %s, FALSE, %s)
                 """,
-                (user_id, community_id, warn_date, reason, applied_by_id),
+                (user_id, community_id, warning_day, reason, applied_by_id),
             )
             created = True
         except IntegrityError as err:

@@ -8,6 +8,8 @@ from discord.ext import commands, tasks
 from datetime import timedelta, datetime, date, timezone
 from dateutil.relativedelta import relativedelta
 from core.time_functions import now
+from core.moderation_validation import (BAN_REASON_MAX_LENGTH, BAN_REASON_DETAILS_MAX_LENGTH,
+                                       valid_ban_reason, normalize_ban_reason_details)
 from core.database import (
     assignTempRole,
     getProfileData,
@@ -23,6 +25,7 @@ from core.database import (
 )
 from core.verifications import verifyDate
 from core.database import *
+from core.database import valid_warning_reason
 from core.discord_events import logWarn, logBan, logMute, getStaffRoles
 from core.notifications import notify_owner_and_user
 from core.identity_api import IdentityApiError, get_identity_summary
@@ -2000,6 +2003,14 @@ class ModerationCog(commands.Cog):
                 ephemeral=True,
             )
 
+        # Reject before touching Discord: a failed write must never leave
+        # a timeout behind. The column and Discord embed field support 1024.
+        if not valid_warning_reason(motivo):
+            return await ctx.response.send_message(
+                content='O motivo do warn deve ter entre 1 e 1024 caracteres.',
+                ephemeral=True,
+            )
+
         mute_member: discord.Member | None = None
         mute_delta: timedelta | None = None
         mute_until: datetime | None = None
@@ -2140,7 +2151,7 @@ class ModerationCog(commands.Cog):
                         mute_member,
                         mute_until,
                         moderator=ctx.user,
-                        reason=f"Warn: {motivo}",
+                        reason=motivo,
                     )
                 except (discord.Forbidden, discord.HTTPException):
                     logging.exception(
@@ -2218,7 +2229,7 @@ class ModerationCog(commands.Cog):
                     mute_member,
                     mute_until,
                     moderator=ctx.user,
-                    reason=f"Warn: {motivo}",
+                    reason=motivo,
                 )
             except (discord.Forbidden, discord.HTTPException):
                 logging.exception(
@@ -2408,7 +2419,8 @@ class ModerationCog(commands.Cog):
     )
     @app_commands.describe(
         member='Membro que será banido',
-        reason='Motivo do banimento (obrigatório)',
+        reason='Motivo breve (obrigatório, limite do histórico de auditoria do Discord)',
+        details='Detalhamento interno opcional, exclusivo da Staff (até 2048 caracteres)',
         duration='Duração opcional (ex: 1d, 2s, 3m, 1a)',
         no_appeal='Define se o membro pode recorrer. Padrão: não pode.',
         delete_messages='Mensagens a deletar ao banir. Padrão: nenhuma.',
@@ -2421,6 +2433,7 @@ class ModerationCog(commands.Cog):
         duration: str | None = None,
         no_appeal: bool = True,
         delete_messages: int = 0,
+        details: str | None = None,
     ):
         if ctx.user.id == member.id:
             return await ctx.response.send_message(
@@ -2431,6 +2444,23 @@ class ModerationCog(commands.Cog):
         if not any(role in ctx.user.roles for role in staff_roles):
             return await ctx.response.send_message(
                 content='Você não tem permissão para fazer isso.',
+                ephemeral=True,
+            )
+
+        # Valid only after the Database capacity migration; never truncate
+        # detailed moderation records or apply Discord effects without a ledger.
+        if not valid_ban_reason(reason):
+            return await ctx.response.send_message(
+                content=(f"O motivo deve caber em {BAN_REASON_MAX_LENGTH} caracteres "
+                         "após a codificação UTF-8 para a auditoria do Discord."),
+                ephemeral=True,
+            )
+
+        try:
+            private_details = normalize_ban_reason_details(details)
+        except ValueError:
+            return await ctx.response.send_message(
+                content=f'O detalhamento pode ter até {BAN_REASON_DETAILS_MAX_LENGTH} caracteres.',
                 ephemeral=True,
             )
 
@@ -2473,6 +2503,7 @@ class ModerationCog(commands.Cog):
             member,
             reason,
             ctx.user,
+            reason_details=private_details,
             valid_until=valid_until,
             can_appeal=can_appeal,
         )

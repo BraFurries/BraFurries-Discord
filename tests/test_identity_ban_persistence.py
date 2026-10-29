@@ -1,6 +1,9 @@
 from contextlib import contextmanager
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import mysql.connector
 
 with patch("mysql.connector.pooling.MySQLConnectionPool"):
     from core import database
@@ -308,3 +311,199 @@ def test_recorded_ban_effects_mark_existing_identity_memberships_banned(monkeypa
     assert len(membership_updates) == 2
     assert {params[0] for _sql, params in membership_updates} == {10, 20}
     assert all(params[1] == 77 for _sql, params in membership_updates)
+
+
+class CapturedBanCursor:
+    def __init__(self):
+        self.executed = []
+        self.lastrowid = 456
+
+    def execute(self, sql, params):
+        self.executed.append((sql, params))
+
+    def fetchone(self):
+        return {"community_id": 77}
+
+
+def test_register_ban_binds_date_objects_instead_of_full_timestamps(monkeypatch):
+    cursor = CapturedBanCursor()
+    seen_guilds = []
+
+    @contextmanager
+    def fake_pooled_connection():
+        yield cursor
+
+    def include_user(user, guild_id):
+        seen_guilds.append(guild_id)
+        return 10 if user.id == 111 else 99
+
+    monkeypatch.setattr(database, "pooled_connection", fake_pooled_connection)
+    monkeypatch.setattr(database, "includeUser", include_user)
+
+    result = database.registerUserBan(
+        1234,
+        SimpleNamespace(id=111),
+        "violação de regra",
+        SimpleNamespace(id=999),
+        valid_until=datetime(2026, 11, 1, 18, 45, 3),
+        can_appeal=True,
+        ban_date=datetime(2026, 10, 27, 19, 41, 40),
+    )
+
+    assert result == 456
+    assert seen_guilds == [1234, 1234]
+    sql, params = next(
+        (sql, params) for sql, params in cursor.executed
+        if "INSERT INTO user_bans" in sql
+    )
+    assert "INSERT INTO user_bans" in sql
+    assert params == (
+        10, 77, date(2026, 10, 27), "violação de regra",
+        None, True, date(2026, 11, 1), 99,
+    )
+    assert type(params[2]) is date
+    assert type(params[6]) is date
+    assert any(
+        "UPDATE user_community_status" in statement and bound == (10, 77)
+        for statement, bound in cursor.executed
+    )
+
+
+def test_register_permanent_ban_uses_today_date_and_null_expiration(monkeypatch):
+    cursor = CapturedBanCursor()
+
+    @contextmanager
+    def fake_pooled_connection():
+        yield cursor
+
+    monkeypatch.setattr(database, "pooled_connection", fake_pooled_connection)
+    monkeypatch.setattr(database, "includeUser", lambda *_: 10)
+    start_date = datetime.now().date()
+
+    assert database.registerUserBan(
+        1234, SimpleNamespace(id=111), "regra", SimpleNamespace(id=999),
+        valid_until=None, can_appeal=False,
+    ) == 456
+
+    params = next(bound for sql, bound in cursor.executed if "INSERT INTO user_bans" in sql)
+    assert type(params[2]) is date
+    assert start_date <= params[2] <= datetime.now().date()
+    assert params[4] is None  # optional reason_details
+    assert params[6] is None  # permanent ban
+
+
+def test_ban_dataerror_logs_only_safe_diagnostic_metadata(monkeypatch, caplog):
+    cursor = CapturedBanCursor()
+
+    @contextmanager
+    def failing_pooled_connection():
+        yield cursor
+
+    def fail_on_insert(sql, params):
+        if "INSERT INTO user_bans" in sql:
+            raise mysql.connector.DataError(
+                msg="private moderation reason must not be logged",
+                errno=1292,
+                sqlstate="22007",
+            )
+        cursor.executed.append((sql, params))
+
+    cursor.execute = fail_on_insert
+    monkeypatch.setattr(database, "pooled_connection", failing_pooled_connection)
+    monkeypatch.setattr(database, "includeUser", lambda *_: 10)
+
+    assert database.registerUserBan(
+        1234, SimpleNamespace(id=111), "regra", SimpleNamespace(id=999),
+        valid_until=None, can_appeal=True,
+    ) is False
+    assert "errno=1292" in caplog.text
+    assert "sqlstate=22007" in caplog.text
+    assert "guild_id=1234" in caplog.text
+    assert "private moderation reason" not in caplog.text
+
+
+def test_private_ban_details_are_persisted_only_for_requested_tenant(monkeypatch):
+    cursor = CapturedBanCursor()
+
+    @contextmanager
+    def fake_pooled_connection():
+        yield cursor
+
+    monkeypatch.setattr(database, "pooled_connection", fake_pooled_connection)
+    monkeypatch.setattr(
+        database, "includeUser",
+        lambda user, _guild: 10 if user.id == 111 else 99,
+    )
+    reason = "Violação das regras."
+    details = "Contexto reservado. Pessoas envolvidas e evidências."
+    assert database.registerUserBan(
+        1234, SimpleNamespace(id=111), reason, SimpleNamespace(id=999),
+        valid_until=None, can_appeal=True, reason_details=details,
+    ) == 456
+    sql, params = next(
+        (sql, params) for sql, params in cursor.executed
+        if "INSERT INTO user_bans" in sql
+    )
+    assert "reason_details" in sql
+    assert params[0:2] == (10, 77)
+    assert params[3:6] == (reason, details, True)
+    assert not any(
+        details in str(params) for sql, params in cursor.executed
+        if "UPDATE user_community_status" in sql
+    )
+
+
+def test_invalid_private_ban_details_do_not_write_or_log_sensitive_text(monkeypatch, caplog):
+    def fail(*_args, **_kwargs):
+        raise AssertionError("No database operation expected")
+
+    monkeypatch.setattr(database, "pooled_connection", fail)
+    private_details = "evidence-private-" + "x" * 2050
+    assert database.registerUserBan(
+        1234, SimpleNamespace(id=111), "Regra", SimpleNamespace(id=999),
+        valid_until=None, can_appeal=False, reason_details=private_details,
+    ) is False
+    assert private_details not in caplog.text
+    assert "guild_id=1234" in caplog.text
+
+
+def test_invalid_public_ban_reason_fails_before_any_database_effect(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise AssertionError("No database operation expected")
+
+    monkeypatch.setattr(database, "pooled_connection", fail)
+    assert database.registerUserBan(
+        1234, SimpleNamespace(id=111), "é" * 100, SimpleNamespace(id=999),
+        valid_until=None, can_appeal=False,
+    ) is False
+
+
+def test_legacy_discord_ban_import_keeps_long_reason_without_new_audit_effect(monkeypatch):
+    """Legacy /perfil sync must not be blocked by new /ban audit-header limit."""
+    cursor = CapturedBanCursor()
+
+    @contextmanager
+    def fake_pooled_connection():
+        yield cursor
+
+    monkeypatch.setattr(database, "pooled_connection", fake_pooled_connection)
+    monkeypatch.setattr(database, "includeUser", lambda *_: 10)
+    # Legacy audit records can be longer than the newly enforced short /ban field.
+    legacy_reason = "Descrição de ocorrência histórica. " * 26
+    assert len(legacy_reason) <= 2048
+
+    assert database.registerUserBan(
+        1234,
+        SimpleNamespace(id=111),
+        legacy_reason,
+        None,
+        valid_until=None,
+        can_appeal=False,
+        ban_date=datetime(2026, 10, 29, 10, 0, 0),
+        allow_incomplete_record=True,
+    ) == 456
+    params = next(params for sql, params in cursor.executed
+                  if "INSERT INTO user_bans" in sql)
+    assert params[3] == legacy_reason
+    assert params[4] is None
+    assert params[7] is None
