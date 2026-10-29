@@ -13,7 +13,7 @@ from core.discord_events import getStaffRoles
 from core.portaria_clarification_store import (
     reserve_ticket, ticket_settings, get_ticket, list_open_tickets,
     claim_open, remember_channel, mark_open, mark_open_failed,
-    claim_close, mark_closed, restore_open,
+    claim_close, mark_closed, restore_open, reset_missing_open_channel,
 )
 
 log = logging.getLogger(__name__)
@@ -32,17 +32,22 @@ def _ticket_topic(ticket_id: int, submission_id: int) -> str:
 async def _existing_channel(
     guild: discord.Guild, ticket_id: int, submission_id: int, saved_channel_id: int | None
 ) -> discord.TextChannel | None:
+    topic = _ticket_topic(ticket_id, submission_id)
     if saved_channel_id:
         found = guild.get_channel(int(saved_channel_id))
-        if isinstance(found, discord.TextChannel):
+        if (isinstance(found, discord.TextChannel)
+                and found.guild.id == guild.id and found.topic == topic):
             return found
         try:
             fetched = await guild.fetch_channel(int(saved_channel_id))
-            if isinstance(fetched, discord.TextChannel):
+            if (isinstance(fetched, discord.TextChannel)
+                    and fetched.guild.id == guild.id and fetched.topic == topic):
                 return fetched
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        except discord.NotFound:
             pass
-    topic = _ticket_topic(ticket_id, submission_id)
+        # A failed Discord request must NOT be confused with a deleted
+        # channel: callers may reset state only after a complete 200 response
+        # from fetch_channels with the expected topic absent.
     # Recovery after Discord created a channel but its HTTP response was lost.
     # The gateway cache can be stale; consult Discord before ever creating
     # another channel for the same durable ticket ID.
@@ -104,11 +109,22 @@ class PortariaClarificationReasonModal(
                 ephemeral=True)
             return
         if ticket["status"] == "OPEN":
-            channel = await _existing_channel(
-                guild, ticket_id, self.submission_id, ticket.get("discord_channel_id"))
+            try:
+                channel = await _existing_channel(
+                    guild, ticket_id, self.submission_id, ticket.get("discord_channel_id"))
+            except (discord.Forbidden, discord.HTTPException):
+                await interaction.followup.send(
+                    "Não foi possível confirmar o canal existente no Discord. "
+                    "Nenhum novo canal será criado até a consulta funcionar.",
+                    ephemeral=True)
+                return
+            if channel is None and ticket.get("discord_channel_id"):
+                reset_missing_open_channel(
+                    ticket_id, guild.id, int(ticket["discord_channel_id"]))
             await interaction.followup.send(
                 f"Atendimento já aberto: {channel.mention}" if channel else
-                "O ticket já consta como aberto, mas o canal não foi localizado. Avise a coordenação.",
+                "O canal anterior não foi encontrado. O mesmo ticket poderá "
+                "ser recuperado solicitando esclarecimentos novamente.",
                 ephemeral=True)
             return
         if not claim_open(ticket_id, guild.id):
