@@ -10,6 +10,7 @@ import logging
 import discord
 
 from core.discord_events import getStaffRoles
+from core.database import get_form_submission
 from core.portaria_clarification_store import (
     reserve_ticket, ticket_settings, get_ticket, list_open_tickets,
     claim_open, remember_channel, mark_open, mark_open_failed,
@@ -86,7 +87,15 @@ class PortariaClarificationReasonModal(
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild = interaction.guild
-        settings = ticket_settings(guild.id)
+        try:
+            settings = ticket_settings(guild.id)
+        except Exception:
+            log.exception("Failed to read Portaria ticket feature config guild=%s", guild.id)
+            await interaction.followup.send(
+                "A configuração da Portaria está temporariamente indisponível. "
+                "Nenhum ticket foi aberto; tente novamente mais tarde.",
+                ephemeral=True)
+            return
         if not settings.get("clarification_tickets_enabled"):
             await interaction.followup.send(
                 "Os tickets da Portaria estão desabilitados na configuração do site.",
@@ -177,14 +186,41 @@ class PortariaClarificationReasonModal(
             if not remember_channel(ticket_id, guild.id, channel.id):
                 raise RuntimeError("Falha ao registrar o canal privado do atendimento.")
             view = PortariaClarificationCloseView(ticket_id)
+            # Tag the candidate in the private ticket, where the candidate
+            # actually has access and Discord can deliver the mention.
             await channel.send(
-                f"Atendimento excepcional da ficha **#{self.submission_id}**. "
-                "A Staff poderá esclarecer dúvidas antes de analisar a ficha original. "
-                "Este canal não altera a aprovação ou reprovação.",
-                view=view, allowed_mentions=discord.AllowedMentions.none())
+                f"{applicant.mention}, a equipe da Portaria deseja conversar com você. "
+                f"Este é o atendimento **#{ticket_id}**, vinculado à ficha "
+                f"**#{self.submission_id}**. Responda neste canal privado; "
+                "a ficha original continua pendente.",
+                view=view,
+                allowed_mentions=discord.AllowedMentions(
+                    everyone=False, roles=False, users=[applicant]),
+            )
             if not mark_open(ticket_id, guild.id, channel.id):
                 raise RuntimeError("Falha de transição ao registrar o canal do atendimento.")
             interaction.client.add_view(view)
+            # Also annotate the original staff-facing ficha with a mention,
+            # as requested. Never include answers or the private conversation.
+            # Notification failure must not roll back an opened ticket.
+            try:
+                form = get_form_submission(self.submission_id)
+                if form and int(form.get("guild_id") or 0) == guild.id:
+                    form_channel = guild.get_channel(int(form["channel_id"]))
+                    if form_channel is None:
+                        form_channel = await guild.fetch_channel(int(form["channel_id"]))
+                    if isinstance(form_channel, discord.TextChannel) and form.get("message_id"):
+                        original = await form_channel.fetch_message(int(form["message_id"]))
+                        await original.reply(
+                            f"Esclarecimento **#{ticket_id}** solicitado para "
+                            f"{applicant.mention}. Atendimento em canal privado.",
+                            allowed_mentions=discord.AllowedMentions(
+                                everyone=False, roles=False, users=[applicant]),
+                            mention_author=False,
+                        )
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                log.warning("Could not annotate original Portaria form guild=%s ticket=%s",
+                            guild.id, ticket_id)
             await interaction.followup.send(
                 f"Atendimento privado criado: {channel.mention}", ephemeral=True)
         except (discord.Forbidden, discord.NotFound, discord.HTTPException, ValueError, RuntimeError):
