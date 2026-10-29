@@ -46,7 +46,18 @@ class PortariaDecisionView(discord.ui.View):
         reject_button.callback = self._handle_reject
         self.add_item(approve_button)
         self.add_item(reject_button)
-        if guild_id is not None and ticket_settings(guild_id).get("clarification_tickets_enabled"):
+        # Configuration read failures must never hide the two established
+        # Approve/Reject actions or break existing form messages.
+        clarification_enabled = False
+        if guild_id is not None:
+            try:
+                clarification_enabled = bool(
+                    ticket_settings(guild_id).get("clarification_tickets_enabled"))
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Portaria ticket configuration temporarily unavailable guild=%s", guild_id)
+        if clarification_enabled:
             clarify_button = discord.ui.Button(
                 label="Solicitar esclarecimentos",
                 style=discord.ButtonStyle.primary,
