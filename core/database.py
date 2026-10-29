@@ -8590,7 +8590,7 @@ def list_pending_portaria_submissions() -> list[dict]:
     with pooled_connection() as cursor:
         cursor.execute(
             """
-            SELECT fs.id, fs.message_id, fs.guild_id
+            SELECT fs.id, fs.message_id, fs.guild_id, fs.channel_id
             FROM form_submissions fs
             INNER JOIN form_flows ff ON ff.id = fs.flow_id
             WHERE ff.type = 'portaria'
