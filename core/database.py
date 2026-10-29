@@ -2238,7 +2238,9 @@ def get_portaria_base_config(guild_id: int) -> dict:
                 idade_minima_conta_acesso_provisorio_ativa,
                 idade_minima_conta_acesso_provisorio_dias,
                 idade_minima_entrada_servidor_ativa,
-                idade_minima_entrada_servidor_anos
+                idade_minima_entrada_servidor_anos,
+                clarification_tickets_enabled,
+                clarification_ticket_category_id
             FROM portaria_base_config
             WHERE server_guild_id = %s
             """,
@@ -8569,7 +8571,7 @@ def list_pending_portaria_submissions() -> list[dict]:
     with pooled_connection() as cursor:
         cursor.execute(
             """
-            SELECT fs.id, fs.message_id
+            SELECT fs.id, fs.message_id, fs.guild_id
             FROM form_submissions fs
             INNER JOIN form_flows ff ON ff.id = fs.flow_id
             WHERE ff.type = 'portaria'
