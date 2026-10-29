@@ -66,6 +66,13 @@ async def _existing_channel(
                 None)
 
 
+def _assert_channel_is_private(guild: discord.Guild, channel: discord.TextChannel) -> None:
+    """Never ping an applicant in a channel that lost its @everyone deny."""
+    overwrite = channel.overwrites_for(guild.default_role)
+    if overwrite.view_channel is not False:
+        raise ValueError("O canal de esclarecimento não está privado para @everyone.")
+
+
 async def _ensure_ticket_introduction(
     channel: discord.TextChannel, *, bot_id: int, ticket_id: int,
     submission_id: int, applicant: discord.Member,
@@ -203,6 +210,7 @@ class PortariaClarificationReasonModal(
                     topic=_ticket_topic(ticket_id, self.submission_id),
                     reason=f"Portaria: atendimento excepcional #{ticket_id}",
                 )
+            _assert_channel_is_private(guild, channel)
             # If posting the message fails, keep this Discord channel ID
             # linked to the ticket. The original form must remain undecidable
             # until the same channel can be recovered and the ticket closed.
@@ -382,6 +390,7 @@ async def reconcile_incomplete_clarification_tickets(bot: discord.Client) -> Non
             )
             if channel is None:
                 continue
+            _assert_channel_is_private(guild, channel)
             # Recheck the original ticket state under DB CAS before touching
             # Discord. A concurrent Staff retry may already own the lease.
             if not claim_open(ticket_id, guild_id):
