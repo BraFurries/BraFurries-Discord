@@ -1582,7 +1582,16 @@ async def clarify_existing_portaria_form(
             "Apenas a Staff autorizada pode solicitar esclarecimentos.",
             ephemeral=True)
         return
-    if not ticket_settings(ctx.guild.id).get("clarification_tickets_enabled"):
+    try:
+        enabled = bool(ticket_settings(ctx.guild.id).get("clarification_tickets_enabled"))
+    except Exception:
+        logging.exception("Falha ao ler configuração de ticket da Portaria guild=%s",
+                          ctx.guild.id)
+        await ctx.response.send_message(
+            "Não foi possível consultar a configuração da Portaria. "
+            "Tente novamente em instantes.", ephemeral=True)
+        return
+    if not enabled:
         await ctx.response.send_message(
             "Habilite os tickets na configuração da Portaria no site.",
             ephemeral=True)
