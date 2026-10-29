@@ -101,6 +101,24 @@ def list_open_tickets() -> list[dict]:
         return cursor.fetchall() or []
 
 
+
+def list_recoverable_tickets(*, limit: int = 8) -> list[dict]:
+    """Bounded scan for channels created before an interrupted DB/Discord flow."""
+    with pooled_connection() as cursor:
+        cursor.execute(
+            """SELECT id, guild_id, submission_id, discord_channel_id,
+                      applicant_discord_user_id, status
+               FROM portaria_clarification_tickets
+               WHERE discord_channel_id IS NOT NULL
+                 AND (status = 'FAILED' OR
+                      (status = 'OPENING' AND
+                       opening_attempted_at < UTC_TIMESTAMP(6) - INTERVAL 10 MINUTE))
+               ORDER BY requested_at ASC LIMIT %s""",
+            (min(20, max(1, limit)),))
+        return cursor.fetchall() or []
+
+
+
 def has_active_ticket(submission_id: int, guild_id: int) -> bool:
     with pooled_connection() as cursor:
         cursor.execute(
