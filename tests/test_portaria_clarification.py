@@ -384,3 +384,52 @@ def test_candidate_mention_goes_to_private_ticket_when_not_yet_notified():
     assert "<@777>" in content
     assert "atendimento **#42**" in content
     assert channel.send.await_args.kwargs["allowed_mentions"].everyone is False
+
+
+def test_background_recovery_only_reuses_an_existing_channel(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from core import portaria_clarification as handler
+
+    ticket = {"id": 42, "guild_id": 222, "submission_id": 19,
+              "applicant_discord_user_id": 777,
+              "discord_channel_id": 999, "status": "FAILED"}
+    channel = SimpleNamespace(id=999)
+    applicant = SimpleNamespace(id=777)
+    guild = SimpleNamespace(id=222, get_member=lambda _id: applicant)
+    bot = SimpleNamespace(get_guild=lambda _id: guild,
+                          user=SimpleNamespace(id=333), add_view=Mock())
+    claim = Mock(return_value=True)
+    remember = Mock(return_value=True)
+    mark = Mock(return_value=True)
+    notify = AsyncMock()
+    monkeypatch.setattr(handler, "list_recoverable_tickets", lambda **_: [ticket])
+    monkeypatch.setattr(handler, "_existing_channel", AsyncMock(return_value=channel))
+    monkeypatch.setattr(handler, "_ensure_ticket_introduction", notify)
+    monkeypatch.setattr(handler, "claim_open", claim)
+    monkeypatch.setattr(handler, "remember_channel", remember)
+    monkeypatch.setattr(handler, "mark_open", mark)
+
+    asyncio.run(handler.reconcile_incomplete_clarification_tickets(bot))
+    claim.assert_called_once_with(42, 222)
+    remember.assert_called_once_with(42, 222, 999)
+    mark.assert_called_once_with(42, 222, 999)
+    notify.assert_awaited_once()
+    bot.add_view.assert_called_once()
+
+
+def test_background_recovery_does_not_create_a_channel_when_missing(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from core import portaria_clarification as handler
+
+    ticket = {"id": 42, "guild_id": 222, "submission_id": 19,
+              "applicant_discord_user_id": 777, "discord_channel_id": 999,
+              "status": "FAILED"}
+    bot = SimpleNamespace(get_guild=lambda _: SimpleNamespace(id=222))
+    claim = Mock()
+    monkeypatch.setattr(handler, "list_recoverable_tickets", lambda **_: [ticket])
+    monkeypatch.setattr(handler, "_existing_channel", AsyncMock(return_value=None))
+    monkeypatch.setattr(handler, "claim_open", claim)
+    asyncio.run(handler.reconcile_incomplete_clarification_tickets(bot))
+    claim.assert_not_called()
