@@ -232,17 +232,19 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
             return
         try:
             channel = interaction.channel
-            applicant = guild.get_member(int(ticket["applicant_discord_user_id"]))
-            if applicant is None:
-                # The applicant may have left the guild. Still close the ticket;
-                # the historical Discord overwrite can be revoked by snowflake.
-                applicant = discord.Object(id=int(ticket["applicant_discord_user_id"]))
-            # Revoke access without deleting records or changing form decisions.
-            await channel.set_permissions(
-                applicant, overwrite=discord.PermissionOverwrite(view_channel=False),
-                reason=f"Encerramento de esclarecimento #{self.ticket_id}")
-            await channel.edit(name=f"esclarecimento-encerrado-{self.ticket_id}",
-                               reason=f"Encerramento de esclarecimento #{self.ticket_id}")
+            # Remove the applicant-specific overwrite in a single Discord
+            # channel edit, even if the member already left the guild.
+            # Keep everyone denied, Staff roles and Coddy permissions intact.
+            active_overwrites = channel.overwrites
+            sanitized = {
+                target: overwrite for target, overwrite in active_overwrites.items()
+                if getattr(target, "id", None) != int(ticket["applicant_discord_user_id"])
+            }
+            await channel.edit(
+                name=f"esclarecimento-encerrado-{self.ticket_id}",
+                overwrites=sanitized,
+                reason=f"Encerramento de esclarecimento #{self.ticket_id}",
+            )
             if not mark_closed(self.ticket_id, guild.id, interaction.user.id, str(self.reason)):
                 raise RuntimeError("Não foi possível persistir o encerramento")
             # A failed informational message must not reverse a committed close.
