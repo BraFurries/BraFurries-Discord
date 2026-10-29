@@ -8,6 +8,7 @@ from core.moderation_validation import (
     audit_reason_encoded_length,
     normalize_ban_reason_details,
     valid_ban_reason,
+    valid_legacy_ban_reason,
 )
 
 
@@ -47,3 +48,13 @@ def test_report_can_be_private_while_the_public_reason_is_short():
     )
     assert valid_ban_reason(short)
     assert normalize_ban_reason_details(details) == details
+
+
+def test_legacy_import_preserves_older_reason_without_relaxing_new_bans():
+    reason = "Descrição histórica com acentuação e contexto. " * 20
+    assert 512 < audit_reason_encoded_length(reason)
+    assert len(reason) < 2048
+    assert valid_legacy_ban_reason(reason)
+    assert not valid_ban_reason(reason)
+    assert not valid_legacy_ban_reason("x" * 2049)
+    assert not valid_legacy_ban_reason("")
