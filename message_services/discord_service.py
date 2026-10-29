@@ -9,6 +9,7 @@ from core.monthly_bumps import run_monthly_reward_cycle
 from core.auto_join_roles import is_sensitive
 from core.form_views import register_published_form_views
 from core.portaria_views import register_pending_portaria_views
+from core.portaria_clarification import register_open_clarification_ticket_views
 from message_services.bot_status_api import BotStatusApi
 from discord.ext import tasks
 from discord import app_commands
@@ -463,6 +464,7 @@ async def initialize_bot():
     if env_flag_enabled('BOT_DAILY_RESTART_ENABLED', default=True):
         dailyRestart.start()
     register_pending_portaria_views(bot)
+    register_open_clarification_ticket_views(bot)
     register_published_form_views(bot)
     for guild in bot.guilds:
         await _refresh_invite_cache_for_guild(guild)
