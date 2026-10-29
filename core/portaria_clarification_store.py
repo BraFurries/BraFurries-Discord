@@ -105,10 +105,14 @@ def has_active_ticket(submission_id: int, guild_id: int) -> bool:
     with pooled_connection() as cursor:
         cursor.execute(
             """SELECT id FROM portaria_clarification_tickets
-               WHERE submission_id = %s AND guild_id = %s
+               WHERE guild_id = %s
+                 AND applicant_discord_user_id = (
+                    SELECT fs.user_id FROM form_submissions fs
+                    WHERE fs.id = %s AND fs.guild_id = %s
+                 )
                  AND (status IN ('REQUESTED','OPENING','OPEN','CLOSING')
                       OR (status = 'FAILED' AND discord_channel_id IS NOT NULL))
-               LIMIT 1""", (submission_id, guild_id))
+               LIMIT 1""", (guild_id, submission_id, guild_id))
         return cursor.fetchone() is not None
 
 
