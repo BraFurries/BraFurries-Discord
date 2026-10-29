@@ -146,6 +146,33 @@ def test_new_confirmed_identity_extends_existing_ban_without_membership_lookup()
     assert guild.member_lookups == []
 
 
+def test_legacy_long_reason_uses_safe_audit_summary_on_new_identity():
+    guild = FakeGuild(10, banned={111})
+    legacy_reason = "Violação histórica muito detalhada. " * 30
+    assert len(legacy_reason) < 2048
+
+    effects = asyncio.run(
+        propagate_new_confirmed_identity_ban(
+            guild, [(1, 111), (2, 222)], reason=legacy_reason,
+        )
+    )
+    assert outcomes(effects)[222] == "APPLIED"
+    audit_reason = guild.ban_calls[0][1]["reason"]
+    assert audit_reason == "Banimento legado; motivo completo no historico administrativo."
+    assert legacy_reason not in audit_reason
+
+
+def test_encoded_long_legacy_reason_uses_safe_audit_summary():
+    guild = FakeGuild(10, banned={111})
+    effects = asyncio.run(
+        propagate_new_confirmed_identity_ban(
+            guild, [(1, 111), (2, 222)], reason="🦊" * 50,
+        )
+    )
+    assert outcomes(effects)[222] == "APPLIED"
+    assert guild.ban_calls[0][1]["reason"].startswith("Banimento legado;")
+
+
 def test_origin_discord_id_must_belong_to_requested_identity():
     guild = FakeGuild(10, present={111, 222})
     summary = identity_summary(
