@@ -5245,10 +5245,17 @@ def registerUserBan(
     # Validate at the persistence boundary as well as at the slash command.
     # Imports/legacy callers may omit private context; blank detail maps to NULL.
     from core.moderation_validation import (
-        normalize_ban_reason_details, valid_ban_reason,
+        normalize_ban_reason_details, valid_ban_reason, valid_legacy_ban_reason,
     )
-    if not valid_ban_reason(reason):
-        logging.warning("Ban rejected: invalid public reason (guild_id=%s)", guild_id)
+    # /ban must fit the native Discord audit log. Historical ban synchronization
+    # can preserve a longer reason because it does not apply another ban effect.
+    reason_is_valid = (
+        valid_legacy_ban_reason(reason)
+        if allow_incomplete_record
+        else valid_ban_reason(reason)
+    )
+    if not reason_is_valid:
+        logging.warning("Ban rejected: invalid reason (guild_id=%s)", guild_id)
         return False
     try:
         private_details = normalize_ban_reason_details(reason_details)
