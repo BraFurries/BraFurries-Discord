@@ -5151,12 +5151,23 @@ def deleteTempRole(tempRoleDBId:int):
             )
             return False
 
+def valid_warning_reason(reason: str | None) -> bool:
+    """Accept only complete Discord embed-field-compatible moderation reasons."""
+    return bool(reason and reason.strip()) and (
+        len(reason.encode("utf-16-le")) // 2 <= 1024
+    )
+
+
 def warnMember(
     guild_id: int,
     discord_user: Union[discord.Member, discord.User],
     reason: str,
     applied_by: discord.Member,
 ):
+    # Validate before any database write. Do not truncate moderation evidence.
+    if not valid_warning_reason(reason):
+        logger.warning("Warn não registrado: tamanho de motivo inválido (guild_id=%s)", guild_id)
+        return False
     try:
         user_id = includeUser(discord_user, guild_id)
         applied_by_id = includeUser(applied_by, guild_id)
@@ -5172,7 +5183,8 @@ def warnMember(
                     f"Comunidade do servidor {guild_id} não encontrada ao registrar warn"
                 )
             community_id = community_row["community_id"]
-            warning_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # user_warnings.date is DATE (not DATETIME) in the canonical schema.
+            warning_date = datetime.now().date()
 
             cursor.execute(
                 """
@@ -5223,8 +5235,12 @@ def warnMember(
             }
     except Exception as error:
         logger.error(
-            'Falha ao registrar advertência no banco (tipo=%s)',
+            'Falha ao registrar advertência no banco '
+            '(tipo=%s, errno=%s, sqlstate=%s, guild_id=%s)',
             type(error).__name__,
+            getattr(error, "errno", None),
+            getattr(error, "sqlstate", None),
+            guild_id,
         )
         return False
 
@@ -5671,11 +5687,16 @@ def registerWarnIfAbsent(
     applied_by: discord.Member | discord.User | None,
     warn_date: datetime,
 ) -> dict | None:
-    """Register a warn only if it has not been stored already.
+    """Import only when no same-day, same-reason warning already exists.
 
-    A warn is considered a duplicate when another entry exists for the same
-    member, community, reason and timestamp.
+    The parent user row is locked before lookup+insert to serialize concurrent
+    imports without blocking legitimate independent /warn commands. This
+    retains historical DATE-granularity import semantics even after dropping
+    the legacy unique_warning key.
     """
+    if not valid_warning_reason(reason):
+        logging.warning("Importação de warn rejeitada: motivo inválido (guild=%s)", guild_id)
+        return None
 
     with pooled_connection() as cursor:
         user_id = includeUser(discord_user, guild_id)
@@ -5693,13 +5714,20 @@ def registerWarnIfAbsent(
             return None
 
         community_id = row["community_id"]
+        warning_day = warn_date.date()
+        # SELECT/INSERT is protected by an existing parent row lock; no
+        # extra DDL or unique constraint on the human-readable reason.
+        cursor.execute("SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,))
+        if cursor.fetchone() is None:
+            raise LookupError("Usuário inexistente para importação de warn")
 
         cursor.execute(
             """
             SELECT id FROM user_warnings
             WHERE user_id = %s AND community_id = %s AND reason = %s AND date = %s
+            FOR UPDATE
             """,
-            (user_id, community_id, reason, warn_date),
+            (user_id, community_id, reason, warning_day),
         )
 
         if cursor.fetchone():
@@ -5720,7 +5748,7 @@ def registerWarnIfAbsent(
                 INSERT INTO user_warnings (user_id, community_id, date, reason, expired, applied_by)
                 VALUES (%s, %s, %s, %s, FALSE, %s)
                 """,
-                (user_id, community_id, warn_date, reason, applied_by_id),
+                (user_id, community_id, warning_day, reason, applied_by_id),
             )
             created = True
         except IntegrityError as err:

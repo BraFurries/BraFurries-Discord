@@ -25,6 +25,7 @@ from core.database import (
 )
 from core.verifications import verifyDate
 from core.database import *
+from core.database import valid_warning_reason
 from core.discord_events import logWarn, logBan, logMute, getStaffRoles
 from core.notifications import notify_owner_and_user
 from core.identity_api import IdentityApiError, get_identity_summary
@@ -2002,6 +2003,14 @@ class ModerationCog(commands.Cog):
                 ephemeral=True,
             )
 
+        # Reject before touching Discord: a failed write must never leave
+        # a timeout behind. The column and Discord embed field support 1024.
+        if not valid_warning_reason(motivo):
+            return await ctx.response.send_message(
+                content='O motivo do warn deve ter entre 1 e 1024 caracteres.',
+                ephemeral=True,
+            )
+
         mute_member: discord.Member | None = None
         mute_delta: timedelta | None = None
         mute_until: datetime | None = None
@@ -2142,7 +2151,7 @@ class ModerationCog(commands.Cog):
                         mute_member,
                         mute_until,
                         moderator=ctx.user,
-                        reason=f"Warn: {motivo}",
+                        reason=motivo,
                     )
                 except (discord.Forbidden, discord.HTTPException):
                     logging.exception(
@@ -2220,7 +2229,7 @@ class ModerationCog(commands.Cog):
                     mute_member,
                     mute_until,
                     moderator=ctx.user,
-                    reason=f"Warn: {motivo}",
+                    reason=motivo,
                 )
             except (discord.Forbidden, discord.HTTPException):
                 logging.exception(
