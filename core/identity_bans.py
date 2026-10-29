@@ -106,16 +106,12 @@ async def propagate_confirmed_ban(
             )
             continue
 
-        audit_reason = reason
-        if not is_origin:
-            audit_reason = (
-                f"[Propagado por identidade confirmada; origem Discord "
-                f"{origin_discord_id}] {reason}"
-            )
+        # The same public reason is persisted, logged and sent to the Discord
+        # audit log. No prefix and no silent truncation for linked identities.
         try:
             await guild.ban(
                 target,
-                reason=audit_reason[:512],
+                reason=reason,
                 delete_message_seconds=delete_message_seconds if is_origin else 0,
             )
         except Exception as error:
@@ -168,10 +164,7 @@ async def propagate_new_confirmed_identity_ban(
         try:
             await guild.ban(
                 target,
-                reason=(
-                    "[Propagação automática após confirmação de identidade] "
-                    + reason
-                )[:512],
+                reason=reason,
                 delete_message_seconds=0,
             )
         except Exception as error:
