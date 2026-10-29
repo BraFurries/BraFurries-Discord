@@ -5151,6 +5151,13 @@ def deleteTempRole(tempRoleDBId:int):
             )
             return False
 
+def valid_warning_reason(reason: str | None) -> bool:
+    """Accept only complete Discord embed-field-compatible moderation reasons."""
+    return bool(reason and reason.strip()) and (
+        len(reason.encode("utf-16-le")) // 2 <= 1024
+    )
+
+
 def warnMember(
     guild_id: int,
     discord_user: Union[discord.Member, discord.User],
@@ -5158,7 +5165,7 @@ def warnMember(
     applied_by: discord.Member,
 ):
     # Validate before any database write. Do not truncate moderation evidence.
-    if not reason or not reason.strip() or len(reason) > 1024:
+    if not valid_warning_reason(reason):
         logger.warning("Warn não registrado: tamanho de motivo inválido (guild_id=%s)", guild_id)
         return False
     try:
@@ -5654,7 +5661,7 @@ def registerWarnIfAbsent(
     retains historical DATE-granularity import semantics even after dropping
     the legacy unique_warning key.
     """
-    if not reason or not reason.strip() or len(reason) > 1024:
+    if not valid_warning_reason(reason):
         logging.warning("Importação de warn rejeitada: motivo inválido (guild=%s)", guild_id)
         return None
 
