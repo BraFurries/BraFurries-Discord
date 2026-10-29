@@ -143,14 +143,14 @@ class PortariaClarificationReasonModal(
                     topic=_ticket_topic(ticket_id, self.submission_id),
                     reason=f"Portaria: atendimento excepcional #{ticket_id}",
                 )
-            if not mark_open(ticket_id, guild.id, channel.id):
-                raise RuntimeError("Falha de transição ao registrar o canal do atendimento.")
             view = PortariaClarificationCloseView(ticket_id)
             await channel.send(
                 f"Atendimento excepcional da ficha **#{self.submission_id}**. "
                 "A Staff poderá esclarecer dúvidas antes de analisar a ficha original. "
                 "Este canal não altera a aprovação ou reprovação.",
                 view=view, allowed_mentions=discord.AllowedMentions.none())
+            if not mark_open(ticket_id, guild.id, channel.id):
+                raise RuntimeError("Falha de transição ao registrar o canal do atendimento.")
             interaction.client.add_view(view)
             await interaction.followup.send(
                 f"Atendimento privado criado: {channel.mention}", ephemeral=True)
