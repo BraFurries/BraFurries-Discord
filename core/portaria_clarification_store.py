@@ -96,7 +96,8 @@ def has_active_ticket(submission_id: int, guild_id: int) -> bool:
         cursor.execute(
             """SELECT id FROM portaria_clarification_tickets
                WHERE submission_id = %s AND guild_id = %s
-                 AND status IN ('REQUESTED','OPENING','OPEN','CLOSING')
+                 AND (status IN ('REQUESTED','OPENING','OPEN','CLOSING')
+                      OR (status = 'FAILED' AND discord_channel_id IS NOT NULL))
                LIMIT 1""", (submission_id, guild_id))
         return cursor.fetchone() is not None
 
@@ -113,6 +114,22 @@ def claim_open(ticket_id: int, guild_id: int) -> bool:
                       OR (status = 'OPENING' AND
                           opening_attempted_at < UTC_TIMESTAMP(6) - INTERVAL 10 MINUTE))""",
             (ticket_id, guild_id))
+        return cursor.rowcount == 1
+
+
+def remember_channel(ticket_id: int, guild_id: int, channel_id: int) -> bool:
+    """Persist Discord's side effect before posting the close controls.
+
+    When channel creation succeeds but posting fails, keeping its ID blocks
+    a competing Portaria decision and makes a retry recover the same channel.
+    """
+    with pooled_connection() as cursor:
+        cursor.execute(
+            """UPDATE portaria_clarification_tickets
+               SET discord_channel_id = %s, version = version + 1
+               WHERE id = %s AND guild_id = %s AND status = 'OPENING'
+                 AND (discord_channel_id IS NULL OR discord_channel_id = %s)""",
+            (channel_id, ticket_id, guild_id, channel_id))
         return cursor.rowcount == 1
 
 
