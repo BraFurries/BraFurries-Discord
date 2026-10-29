@@ -8486,7 +8486,8 @@ def record_form_decision(submission_id: int, decision: str, decided_by: int) -> 
             """
             SELECT id FROM portaria_clarification_tickets
             WHERE submission_id = %s
-              AND status IN ('REQUESTED','OPENING','OPEN','CLOSING')
+              AND (status IN ('REQUESTED','OPENING','OPEN','CLOSING')
+                   OR (status = 'FAILED' AND discord_channel_id IS NOT NULL))
             LIMIT 1
             """,
             (submission_id,),
