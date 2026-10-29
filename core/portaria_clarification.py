@@ -35,14 +35,17 @@ async def _existing_channel(
     topic = _ticket_topic(ticket_id, submission_id)
     if saved_channel_id:
         found = guild.get_channel(int(saved_channel_id))
-        if (isinstance(found, discord.TextChannel)
-                and found.guild.id == guild.id and found.topic == topic):
+        if found is not None:
+            if (not isinstance(found, discord.TextChannel)
+                    or found.guild.id != guild.id or found.topic != topic):
+                raise ValueError("O canal salvo não corresponde ao atendimento.")
             return found
         try:
             fetched = await guild.fetch_channel(int(saved_channel_id))
-            if (isinstance(fetched, discord.TextChannel)
-                    and fetched.guild.id == guild.id and fetched.topic == topic):
-                return fetched
+            if (not isinstance(fetched, discord.TextChannel)
+                    or fetched.guild.id != guild.id or fetched.topic != topic):
+                raise ValueError("O canal salvo não corresponde ao atendimento.")
+            return fetched
         except discord.NotFound:
             pass
         # A failed Discord request must NOT be confused with a deleted
@@ -112,10 +115,10 @@ class PortariaClarificationReasonModal(
             try:
                 channel = await _existing_channel(
                     guild, ticket_id, self.submission_id, ticket.get("discord_channel_id"))
-            except (discord.Forbidden, discord.HTTPException):
+            except (discord.Forbidden, discord.HTTPException, ValueError):
                 await interaction.followup.send(
-                    "Não foi possível confirmar o canal existente no Discord. "
-                    "Nenhum novo canal será criado até a consulta funcionar.",
+                    "Não foi possível validar o canal existente no Discord. "
+                    "Nenhum novo canal será criado até conferir o atendimento.",
                     ephemeral=True)
                 return
             if channel is None and ticket.get("discord_channel_id"):
