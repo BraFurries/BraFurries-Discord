@@ -12,7 +12,8 @@ import discord
 from core.discord_events import getStaffRoles
 from core.portaria_clarification_store import (
     reserve_ticket, ticket_settings, get_ticket, list_open_tickets,
-    claim_open, mark_open, mark_open_failed, claim_close, mark_closed, restore_open,
+    claim_open, remember_channel, mark_open, mark_open_failed,
+    claim_close, mark_closed, restore_open,
 )
 
 log = logging.getLogger(__name__)
@@ -151,6 +152,11 @@ class PortariaClarificationReasonModal(
                     topic=_ticket_topic(ticket_id, self.submission_id),
                     reason=f"Portaria: atendimento excepcional #{ticket_id}",
                 )
+            # If posting the message fails, keep this Discord channel ID
+            # linked to the ticket. The original form must remain undecidable
+            # until the same channel can be recovered and the ticket closed.
+            if not remember_channel(ticket_id, guild.id, channel.id):
+                raise RuntimeError("Falha ao registrar o canal privado do atendimento.")
             view = PortariaClarificationCloseView(ticket_id)
             await channel.send(
                 f"Atendimento excepcional da ficha **#{self.submission_id}**. "
@@ -230,6 +236,7 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
             await interaction.followup.send(
                 "O atendimento já está sendo encerrado.", ephemeral=True)
             return
+        permissions_revoked = False
         try:
             channel = interaction.channel
             # Remove the applicant-specific overwrite in a single Discord
@@ -245,6 +252,7 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
                 overwrites=sanitized,
                 reason=f"Encerramento de esclarecimento #{self.ticket_id}",
             )
+            permissions_revoked = True
             if not mark_closed(self.ticket_id, guild.id, interaction.user.id, str(self.reason)):
                 raise RuntimeError("Não foi possível persistir o encerramento")
             # A failed informational message must not reverse a committed close.
@@ -262,9 +270,14 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
         except (discord.Forbidden, discord.NotFound, discord.HTTPException, RuntimeError):
             log.exception("Portaria clarification closure failed guild=%s ticket=%s",
                           guild.id, self.ticket_id)
-            restore_open(self.ticket_id, guild.id)
+            # Once Discord already revoked the applicant, restoring the DB
+            # state to OPEN would falsely advertise an active conversation.
+            # Preserve CLOSING for safe retry/reconciliation instead.
+            if not permissions_revoked:
+                restore_open(self.ticket_id, guild.id)
             await interaction.followup.send(
-                "Falha no encerramento. Confira as permissões e tente novamente.",
+                "Não foi possível concluir o encerramento. A Staff deve "
+                "conferir o canal antes de tentar novamente.",
                 ephemeral=True)
 
 
