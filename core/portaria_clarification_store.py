@@ -110,9 +110,8 @@ def list_recoverable_tickets(*, limit: int = 8) -> list[dict]:
                       applicant_discord_user_id, status
                FROM portaria_clarification_tickets
                WHERE discord_channel_id IS NOT NULL
-                 AND (status = 'FAILED' OR
-                      (status = 'OPENING' AND
-                       opening_attempted_at < UTC_TIMESTAMP(6) - INTERVAL 10 MINUTE))
+                 AND status IN ('FAILED','OPENING')
+                 AND opening_attempted_at < UTC_TIMESTAMP(6) - INTERVAL 10 MINUTE
                ORDER BY requested_at ASC LIMIT %s""",
             (min(20, max(1, limit)),))
         return cursor.fetchall() or []
