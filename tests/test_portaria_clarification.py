@@ -394,9 +394,14 @@ def test_background_recovery_only_reuses_an_existing_channel(monkeypatch):
     ticket = {"id": 42, "guild_id": 222, "submission_id": 19,
               "applicant_discord_user_id": 777,
               "discord_channel_id": 999, "status": "FAILED"}
-    channel = SimpleNamespace(id=999)
+    class FakeChannel:
+        id = 999
+        def overwrites_for(self, _role):
+            return SimpleNamespace(view_channel=False)
+    channel = FakeChannel()
     applicant = SimpleNamespace(id=777)
-    guild = SimpleNamespace(id=222, get_member=lambda _id: applicant)
+    guild = SimpleNamespace(id=222, default_role=object(),
+                            get_member=lambda _id: applicant)
     bot = SimpleNamespace(get_guild=lambda _id: guild,
                           user=SimpleNamespace(id=333), add_view=Mock())
     claim = Mock(return_value=True)
@@ -433,3 +438,14 @@ def test_background_recovery_does_not_create_a_channel_when_missing(monkeypatch)
     monkeypatch.setattr(handler, "claim_open", claim)
     asyncio.run(handler.reconcile_incomplete_clarification_tickets(bot))
     claim.assert_not_called()
+
+
+def test_public_ticket_channel_is_rejected_before_candidate_notification():
+    from types import SimpleNamespace
+    from core import portaria_clarification as handler
+
+    channel = SimpleNamespace(
+        overwrites_for=lambda _: SimpleNamespace(view_channel=True))
+    guild = SimpleNamespace(default_role=object())
+    with pytest.raises(ValueError, match="não está privado"):
+        handler._assert_channel_is_private(guild, channel)
