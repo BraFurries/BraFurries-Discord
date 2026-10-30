@@ -9,7 +9,8 @@ from core.monthly_bumps import run_monthly_reward_cycle
 from core.auto_join_roles import is_sensitive
 from core.form_views import register_published_form_views
 from core.portaria_views import register_pending_portaria_views, sync_pending_portaria_clarification_buttons
-from core.portaria_clarification import register_open_clarification_ticket_views, reconcile_incomplete_clarification_tickets
+from core.portaria_clarification import (register_open_clarification_ticket_views,
+    reconcile_incomplete_clarification_tickets, reconcile_stale_closing_clarification_tickets)
 from message_services.bot_status_api import BotStatusApi
 from discord.ext import tasks
 from discord import app_commands
@@ -1144,6 +1145,7 @@ async def portariaClarificationButtonSync():
             failure_cache=_portaria_clarification_sync_failures)
     )
     await reconcile_incomplete_clarification_tickets(bot)
+    await reconcile_stale_closing_clarification_tickets(bot)
 
 
 @portariaClarificationButtonSync.before_loop
