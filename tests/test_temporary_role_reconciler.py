@@ -174,7 +174,7 @@ def test_claim_uses_distributed_processing_lease_and_strict_tenant_version(monke
     sql,params=cursor.calls[0]
     assert "sync_status='PROCESSING'" in sql
     assert "last_checked_at=UTC_TIMESTAMP(6)" in sql
-    assert "expires_at>UTC_TIMESTAMP(6)" in sql
+    assert "expiring_date>UTC_TIMESTAMP(6)" in sql
     assert "last_checked_at<UTC_TIMESTAMP(6)-INTERVAL 5 MINUTE" in sql
     assert params==(9,4,1,1,"ACTIVE","PENDING")
 
