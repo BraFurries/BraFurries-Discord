@@ -3,7 +3,7 @@ from colormath.color_conversions import convert_color
 from colormath.color_diff import _get_lab_color1_vector, _get_lab_color2_matrix
 from colormath import color_diff_matrix
 from core.AI_Functions.terceiras.openAI import CasualAiResult, OPENAI_TOKEN_INVALID_MARKER, retornaRespostaGPT
-import discord, asyncio, re, random, math, logging, weakref, os
+import discord, asyncio, re, random, math, logging, weakref
 from discord.ext import commands
 from core.database import *
 from core.temp_role_locks import temp_role_lock
@@ -1231,8 +1231,8 @@ async def removeTempRoles(bot:commands.Bot):
                 )
                 # Legacy reward expiration cannot revoke an independently
                 # active manual grant from the API control plane.
-                if os.getenv('TEMP_ROLE_MANAGEMENT_ENABLED', '').strip().lower() == 'true':
-                    has_active_sibling = has_active_sibling or has_active_manual_grant(
+                if not has_active_sibling:
+                    has_active_sibling = has_active_manual_grant(
                         TempRole['disc_community_id'], guild_id,
                         TempRole['user_id'], TempRole['role_id'],
                     )
