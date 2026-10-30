@@ -18,6 +18,8 @@ from core.database import (
     rollback_form_decision,
 )
 from core.discord_events import getStaffRoles
+from core.portaria_clarification import PortariaClarificationReasonModal
+from core.portaria_clarification_store import ticket_settings, has_active_ticket
 from core.time_functions import now
 from core.verifications import extract_date_from_text
 
@@ -26,7 +28,7 @@ PORTARIA_APPROVE_PREFIX = "portaria_approve:"
 PORTARIA_REJECT_PREFIX = "portaria_reject:"
 BIRTHDAY_KEYWORDS = ("nascimento", "anivers")
 class PortariaDecisionView(discord.ui.View):
-    def __init__(self, submission_id: int) -> None:
+    def __init__(self, submission_id: int, guild_id: int | None = None) -> None:
         super().__init__(timeout=None)
         self.submission_id = submission_id
 
@@ -44,6 +46,45 @@ class PortariaDecisionView(discord.ui.View):
         reject_button.callback = self._handle_reject
         self.add_item(approve_button)
         self.add_item(reject_button)
+        # Configuration read failures must never hide the two established
+        # Approve/Reject actions or break existing form messages.
+        clarification_enabled = False
+        if guild_id is not None:
+            try:
+                clarification_enabled = bool(
+                    ticket_settings(guild_id).get("clarification_tickets_enabled"))
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Portaria ticket configuration temporarily unavailable guild=%s", guild_id)
+        if clarification_enabled:
+            clarify_button = discord.ui.Button(
+                label="Solicitar esclarecimentos",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"portaria_clarification_open:{submission_id}",
+            )
+            clarify_button.callback = self._handle_clarification
+            self.add_item(clarify_button)
+
+    async def _handle_clarification(self, interaction: discord.Interaction) -> None:
+        staff_roles = getStaffRoles(interaction.guild) if interaction.guild else []
+        member = interaction.user if isinstance(interaction.user, discord.Member) else None
+        if member is None or not any(role in member.roles for role in staff_roles):
+            await interaction.response.send_message(
+                "Apenas a Staff autorizada pode solicitar esclarecimentos.",
+                ephemeral=True)
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("Servidor não encontrado.", ephemeral=True)
+            return
+        submission = get_form_submission(self.submission_id)
+        if (not submission or int(submission.get("guild_id") or 0) != interaction.guild.id
+                or submission.get("status") != "pending"):
+            await interaction.response.send_message(
+                "Ficha não disponível para este servidor.", ephemeral=True)
+            return
+        await interaction.response.send_modal(
+            PortariaClarificationReasonModal(self.submission_id))
 
     async def _handle_approve(self, interaction: discord.Interaction) -> None:
         await self._handle_decision(interaction, "approved")
@@ -83,6 +124,13 @@ class PortariaDecisionView(discord.ui.View):
         if submission["status"] != "pending":
             await interaction.response.send_message(
                 content="Este formulário já foi analisado.",
+                ephemeral=True,
+            )
+            return
+
+        if has_active_ticket(self.submission_id, interaction.guild.id):
+            await interaction.response.send_message(
+                "Existe um ticket de esclarecimento ativo. Encerre-o antes de decidir a ficha.",
                 ephemeral=True,
             )
             return
@@ -1045,8 +1093,10 @@ class FormBirthdayConflictView(discord.ui.View):
 def build_portaria_view(
     submission_id: int,
     disabled: bool = False,
+    *,
+    guild_id: int | None = None,
 ) -> PortariaDecisionView:
-    view = PortariaDecisionView(submission_id)
+    view = PortariaDecisionView(submission_id, guild_id=guild_id)
     if disabled:
         for item in view.children:
             item.disabled = True
@@ -1101,12 +1151,83 @@ def _build_portaria_decision_embeds(
     return embeds
 
 
+async def sync_pending_portaria_clarification_buttons(
+    bot: discord.Client, *, offset: int = 0, limit: int = 12
+) -> int:
+    """Reconcile existing pending messages with the website's ON/OFF setting.
+
+    Small rotating batches avoid editing every historical Discord card at once.
+    Missing guild, unavailable DB or Discord permissions leave the old message
+    untouched and retry on a later pass. Neither website nor API reads forms.
+    Returns the next offset, so even a large backlog eventually gets scanned.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    if limit < 1:
+        return 0
+    try:
+        pending = list_pending_portaria_submissions()
+    except Exception:
+        logger.exception("Could not list pending Portaria cards for ticket-button sync")
+        return offset
+
+    if not pending:
+        return 0
+    offset %= len(pending)
+    batch = (pending + pending)[offset:offset + min(limit, len(pending))]
+    next_offset = (offset + len(batch)) % len(pending)
+    config_cache: dict[int, bool] = {}
+
+    for form in batch:
+        try:
+            guild_id = int(form["guild_id"])
+            guild = bot.get_guild(guild_id)
+            if guild is None or not form.get("message_id") or not form.get("channel_id"):
+                continue
+            if guild_id not in config_cache:
+                config_cache[guild_id] = bool(
+                    ticket_settings(guild_id).get("clarification_tickets_enabled"))
+            enabled = config_cache[guild_id]
+            channel = guild.get_channel(int(form["channel_id"]))
+            if channel is None:
+                channel = await guild.fetch_channel(int(form["channel_id"]))
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            message = await channel.fetch_message(int(form["message_id"]))
+            ids = {
+                getattr(item, "custom_id", None)
+                for row in message.components
+                for item in getattr(row, "children", ())
+            }
+            submission_id = int(form["id"])
+            # Never replace unrelated / malformed messages.
+            if not {
+                f"{PORTARIA_APPROVE_PREFIX}{submission_id}",
+                f"{PORTARIA_REJECT_PREFIX}{submission_id}",
+            }.issubset(ids):
+                continue
+            has_button = f"portaria_clarification_open:{submission_id}" in ids
+            if has_button == enabled:
+                continue
+            # The member-facing form/decision stays managed by the Coddy.
+            view = PortariaDecisionView(submission_id, guild_id=guild_id)
+            await message.edit(view=view)
+            bot.add_view(view, message_id=message.id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            logger.warning("Cannot sync Portaria clarification button for guild=%s submission=%s",
+                           form.get("guild_id"), form.get("id"))
+        except Exception:
+            logger.exception("Unexpected Portaria ticket-button sync failure guild=%s submission=%s",
+                             form.get("guild_id"), form.get("id"))
+    return next_offset
+
+
 def register_pending_portaria_views(bot: discord.Client) -> None:
     for submission in list_pending_portaria_submissions():
         message_id = submission.get("message_id")
         if not message_id:
             continue
         try:
-            bot.add_view(PortariaDecisionView(int(submission["id"])), message_id=message_id)
+            bot.add_view(PortariaDecisionView(int(submission["id"]), guild_id=int(submission["guild_id"])), message_id=message_id)
         except Exception:
             continue

@@ -8,7 +8,8 @@ from core.disboard_bump import resolve_assignable_bump_role, resolve_realtime_bu
 from core.monthly_bumps import run_monthly_reward_cycle
 from core.auto_join_roles import is_sensitive
 from core.form_views import register_published_form_views
-from core.portaria_views import register_pending_portaria_views
+from core.portaria_views import register_pending_portaria_views, sync_pending_portaria_clarification_buttons
+from core.portaria_clarification import register_open_clarification_ticket_views, reconcile_incomplete_clarification_tickets
 from message_services.bot_status_api import BotStatusApi
 from discord.ext import tasks
 from discord import app_commands
@@ -67,6 +68,7 @@ _bump_warning_locks: dict[int, tuple[asyncio.AbstractEventLoop, asyncio.Lock]] =
 AUTO_JOIN_SENSITIVE_PERMISSIONS = ("ban_members", "manage_roles", "manage_channels")
 invite_cache: dict[int, dict[str, int]] = {}
 status_api: BotStatusApi | None = None
+_portaria_clarification_button_sync_offset = 0
 community_lifecycle_client: CommunityLifecycleApiClient | None = None
 _membership_recovery = MembershipRecoveryQueue()
 _membership_startup_complete = asyncio.Event()
@@ -463,6 +465,8 @@ async def initialize_bot():
     if env_flag_enabled('BOT_DAILY_RESTART_ENABLED', default=True):
         dailyRestart.start()
     register_pending_portaria_views(bot)
+    register_open_clarification_ticket_views(bot)
+    portariaClarificationButtonSync.start()
     register_published_form_views(bot)
     for guild in bot.guilds:
         await _refresh_invite_cache_for_guild(guild)
@@ -1128,6 +1132,22 @@ async def on_user_update(before: discord.User, after: discord.User):
 @tasks.loop(hours=12)
 async def cronJobs12h():
     await removeTempRoles(bot)
+
+@tasks.loop(minutes=3)
+async def portariaClarificationButtonSync():
+    """Incrementally reconcile Discord buttons after the site configuration changes."""
+    global _portaria_clarification_button_sync_offset
+    _portaria_clarification_button_sync_offset = (
+        await sync_pending_portaria_clarification_buttons(
+            bot, offset=_portaria_clarification_button_sync_offset, limit=12)
+    )
+    await reconcile_incomplete_clarification_tickets(bot)
+
+
+@portariaClarificationButtonSync.before_loop
+async def beforePortariaClarificationButtonSync():
+    await bot.wait_until_ready()
+
 
 @tasks.loop(minutes=30)
 async def cronJobs30m():

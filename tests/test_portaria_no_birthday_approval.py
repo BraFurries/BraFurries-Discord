@@ -68,6 +68,7 @@ def build_approval(monkeypatch, *, role_present=True, configured=True, can_manag
     monkeypatch.setattr(portaria_views.discord, "Member", FakeMember)
     monkeypatch.setattr(portaria_views, "getStaffRoles", lambda _guild: [staff_role])
     monkeypatch.setattr(portaria_views, "get_form_submission", lambda _id: submission)
+    monkeypatch.setattr(portaria_views, "has_active_ticket", lambda *_: False)
     monkeypatch.setattr(
         portaria_views, "get_portaria_base_config",
         lambda _guild_id: {"visitante_role_id": 501, "aprovacao_acesso_provisorio_ativo": provisional},
@@ -186,3 +187,11 @@ def test_recent_account_with_provisional_policy_cannot_bypass_temporary_access(m
     context.member.remove_roles.assert_not_awaited()
     context.routing.assert_not_awaited()
     assert "acesso provisório" in context.interaction.followup.send.await_args.kwargs["content"]
+
+
+def test_portaria_decision_requires_clarification_closed(monkeypatch):
+    ctx = build_approval(monkeypatch)
+    monkeypatch.setattr(portaria_views, "has_active_ticket", lambda *_: True)
+    decide(ctx)
+    ctx.decision_record.assert_not_called()
+    assert "Encerre-o antes" in ctx.interaction.response.send_message.await_args.args[0]
