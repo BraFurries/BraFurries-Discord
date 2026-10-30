@@ -323,11 +323,11 @@ async def test_legacy_expiration_preserves_active_manual_grant(monkeypatch):
 
 
 @async_test
-async def test_expired_legacy_owned_role_transfers_to_active_manual_grant(monkeypatch):
+async def test_expired_migrated_legacy_role_transfers_to_active_manual_grant(monkeypatch):
     role = SimpleNamespace(id=50, name="Role")
     member = SimpleNamespace(id=7, display_name="User", roles=[role], remove_roles=AsyncMock())
     record, bot, _ = cleanup_context(member=member, role=role, active_sibling=False)
-    record["role_added_by_bot"] = 1
+    record["role_added_by_bot"] = 0  # historical rows predate ownership tracking
     transfer = Mock()
     expired = Mock()
     monkeypatch.setattr(routine_functions, "getExpiringTempRoles", lambda _guild_id: [record])
@@ -335,7 +335,7 @@ async def test_expired_legacy_owned_role_transfers_to_active_manual_grant(monkey
                         lambda _id: {"is_expired": True})
     monkeypatch.setattr(routine_functions, "hasActiveTempRoleSibling", lambda *_: False)
     monkeypatch.setattr(routine_functions, "has_active_manual_grant", lambda *_: True)
-    monkeypatch.setattr(routine_functions, "transfer_owned_legacy_to_manual", transfer)
+    monkeypatch.setattr(routine_functions, "transfer_legacy_expiration_to_manual", transfer)
     monkeypatch.setattr(routine_functions, "deleteTempRole", expired)
 
     await routine_functions.removeTempRoles(bot)
