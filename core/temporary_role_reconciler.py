@@ -30,17 +30,22 @@ def _backfill_legacy_identity() -> None:
         )
 
 
-def transfer_owned_legacy_to_manual(
+def transfer_legacy_expiration_to_manual(
     legacy_grant_id: int, guild_id: int, discord_user_id: int, role_id: int
 ) -> None:
-    """Only transfer a legacy-owned role to an active manual grant, never an unknown one."""
+    """Preserve legacy expiry cleanup when a manual grant keeps the role.
+
+    Old legacy rows predate role_added_by_bot and were backfilled with zero;
+    their expiry path nevertheless removed the role. Carry that cleanup
+    responsibility onto an active manual grant when expiry is deferred.
+    """
     with pooled_connection() as cursor:
         cursor.execute(
             """UPDATE user_temp_roles manual
                JOIN user_temp_roles legacy ON legacy.id=%s
                SET manual.role_added_by_bot=1
                WHERE legacy.grant_source='LEGACY'
-                 AND legacy.role_added_by_bot=1
+                 AND legacy.status='ACTIVE'
                  AND manual.grant_source='MANUAL'
                  AND manual.disc_community_id=legacy.disc_community_id
                  AND manual.guild_id=%s AND manual.discord_user_id=%s
