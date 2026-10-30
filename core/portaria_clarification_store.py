@@ -253,7 +253,8 @@ def mark_closed(ticket_id: int, guild_id: int, actor_id: int, reason: str) -> bo
         cursor.execute(
             """UPDATE portaria_clarification_tickets
                SET status = 'CLOSED', closed_at = UTC_TIMESTAMP(6),
-                   closed_by_discord_user_id = %s, close_reason = %s,
+                   closed_by_discord_user_id = COALESCE(closed_by_discord_user_id, %s),
+                   close_reason = COALESCE(close_reason, %s),
                    version = version + 1
                WHERE id = %s AND guild_id = %s AND status = 'CLOSING'""",
             (actor_id, clean, ticket_id, guild_id))
