@@ -13,7 +13,7 @@ from core.discord_events import getStaffRoles
 from core.database import get_form_submission
 from core.portaria_clarification_store import (
     reserve_ticket, ticket_settings, get_ticket, list_open_tickets,
-    list_recoverable_tickets,
+    list_recoverable_tickets, list_stale_closing_tickets,
     claim_open, remember_channel, mark_open, mark_open_failed,
     claim_close, mark_closed, restore_open, reset_missing_open_channel,
 )
@@ -314,11 +314,12 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
         if ticket["status"] == "CLOSED":
             await interaction.followup.send("Atendimento já encerrado.", ephemeral=True)
             return
-        if not claim_close(self.ticket_id, guild.id):
+        if not claim_close(self.ticket_id, guild.id, interaction.user.id,
+                           str(self.reason)):
             await interaction.followup.send(
                 "O atendimento já está sendo encerrado.", ephemeral=True)
             return
-        permissions_revoked = False
+        edit_attempted = False
         try:
             channel = interaction.channel
             # Remove the applicant-specific overwrite in a single Discord
@@ -329,12 +330,12 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
                 target: overwrite for target, overwrite in active_overwrites.items()
                 if getattr(target, "id", None) != int(ticket["applicant_discord_user_id"])
             }
+            edit_attempted = True
             await channel.edit(
                 name=f"esclarecimento-encerrado-{self.ticket_id}",
                 overwrites=sanitized,
                 reason=f"Encerramento de esclarecimento #{self.ticket_id}",
             )
-            permissions_revoked = True
             if not mark_closed(self.ticket_id, guild.id, interaction.user.id, str(self.reason)):
                 raise RuntimeError("Não foi possível persistir o encerramento")
             # A failed informational message must not reverse a committed close.
@@ -352,10 +353,10 @@ class PortariaClarificationCloseModal(discord.ui.Modal, title="Encerrar esclarec
         except (discord.Forbidden, discord.NotFound, discord.HTTPException, RuntimeError):
             log.exception("Portaria clarification closure failed guild=%s ticket=%s",
                           guild.id, self.ticket_id)
-            # Once Discord already revoked the applicant, restoring the DB
-            # state to OPEN would falsely advertise an active conversation.
-            # Preserve CLOSING for safe retry/reconciliation instead.
-            if not permissions_revoked:
+            # Discord can apply the edit even if its HTTP response is lost.
+            # Keep the durable CLOSING intent after an attempted Discord edit,
+            # so recovery can validate the channel before closing the ticket.
+            if not edit_attempted:
                 restore_open(self.ticket_id, guild.id)
             await interaction.followup.send(
                 "Não foi possível concluir o encerramento. A Staff deve "
@@ -421,6 +422,65 @@ async def reconcile_incomplete_clarification_tickets(bot: discord.Client) -> Non
             # Leaves channel identity preserved; new attempts never duplicate it.
             mark_open_failed(ticket_id, guild_id, "DISCORD_RECOVERY_ERROR")
 
+
+
+
+async def reconcile_stale_closing_clarification_tickets(bot: discord.Client) -> None:
+    """Complete interrupted closes using the persisted actor/reason.
+
+    Never mark CLOSED unless the exact guild, channel and ticket topic match
+    and the applicant's direct Discord overwrite has been removed. If Discord
+    cannot confirm that state, leave CLOSING to block Portaria decisions.
+    """
+    try:
+        tickets = list_stale_closing_tickets(limit=8)
+    except Exception:
+        log.exception("Could not scan stale Portaria ticket closures")
+        return
+
+    for ticket in tickets:
+        ticket_id = int(ticket["id"])
+        guild_id = int(ticket["guild_id"])
+        try:
+            guild = bot.get_guild(guild_id)
+            if guild is None:
+                continue
+            channel_id = int(ticket["discord_channel_id"])
+            channel = guild.get_channel(channel_id)
+            if channel is None:
+                channel = await guild.fetch_channel(channel_id)
+            if (not isinstance(channel, discord.TextChannel)
+                    or channel.id != channel_id or channel.guild.id != guild_id
+                    or channel.topic != _ticket_topic(ticket_id, int(ticket["submission_id"]))):
+                log.warning("Cannot recover Portaria closing: channel mismatch guild=%s ticket=%s",
+                            guild_id, ticket_id)
+                continue
+            _assert_channel_is_private(guild, channel)
+            if not claim_close(ticket_id, guild_id,
+                               int(ticket["closed_by_discord_user_id"]),
+                               str(ticket["close_reason"])):
+                continue
+            applicant_id = int(ticket["applicant_discord_user_id"])
+            overwrites = channel.overwrites
+            sanitized = {target: ow for target, ow in overwrites.items()
+                         if getattr(target, "id", None) != applicant_id}
+            if len(sanitized) != len(overwrites):
+                await channel.edit(
+                    name=f"esclarecimento-encerrado-{ticket_id}",
+                    overwrites=sanitized,
+                    reason=f"Recuperação de encerramento #{ticket_id}",
+                )
+            if not mark_closed(ticket_id, guild_id,
+                               int(ticket["closed_by_discord_user_id"]),
+                               str(ticket["close_reason"])):
+                raise RuntimeError("Could not commit recovered Portaria closure")
+            log.info("Recovered Portaria clarification closure guild=%s ticket=%s",
+                     guild_id, ticket_id)
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException,
+                ValueError, RuntimeError):
+            # Do not release the form decision lock while Discord is uncertain.
+            log.exception("Portaria closing recovery deferred guild=%s ticket=%s",
+                          guild_id, ticket_id)
 
 
 def register_open_clarification_ticket_views(bot: discord.Client) -> None:
