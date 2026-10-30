@@ -158,3 +158,39 @@ def test_cancel_retries_when_discord_member_lookup_temporarily_fails(monkeypatch
     asyncio.run(worker.reconcile_grant(bot,row("CANCELLED",owned=True)))
     assert finish.call_args.kwargs["error"]=="MEMBER_LOOKUP_FAILED"
     member.remove_roles.assert_not_awaited()
+
+
+def test_claim_uses_distributed_processing_lease_and_strict_tenant_version(monkeypatch):
+    from contextlib import contextmanager
+    class Cursor:
+        rowcount=1
+        def __init__(self): self.calls=[]
+        def execute(self, sql, params): self.calls.append((sql,params))
+    cursor=Cursor()
+    @contextmanager
+    def pool(): yield cursor
+    monkeypatch.setattr(worker,"pooled_connection",pool)
+    assert worker._claim(row())==2
+    sql,params=cursor.calls[0]
+    assert "sync_status='PROCESSING'" in sql
+    assert "last_checked_at=UTC_TIMESTAMP(6)" in sql
+    assert "expires_at>UTC_TIMESTAMP(6)" in sql
+    assert "last_checked_at<UTC_TIMESTAMP(6)-INTERVAL 5 MINUTE" in sql
+    assert params==(9,4,1,1,"ACTIVE","PENDING")
+
+
+def test_processing_lease_must_own_current_version_to_mark_finished(monkeypatch):
+    from contextlib import contextmanager
+    class Cursor:
+        rowcount=0
+        def __init__(self):self.calls=[]
+        def execute(self,sql,params):self.calls.append((sql,params))
+    cursor=Cursor()
+    @contextmanager
+    def pool():yield cursor
+    monkeypatch.setattr(worker,"pooled_connection",pool)
+    assert not worker._finish(row(),2,added=True,error=None)
+    sql,params=cursor.calls[0]
+    assert "sync_status='PROCESSING'" in sql
+    assert "version=%s" in sql
+    assert params[-5:]==(9,4,1,2,"ACTIVE")
