@@ -263,6 +263,7 @@ async def test_expired_final_grant_removes_discord_role_and_deletes_row(monkeypa
     monkeypatch.setattr(routine_functions, "getTempRoleExpirationState", lambda _id: {"is_expired": True})
     monkeypatch.setattr(routine_functions, "hasActiveTempRoleSibling", lambda *_args: active_sibling)
     monkeypatch.setattr(routine_functions, "deleteTempRole", deleted)
+    monkeypatch.setattr(routine_functions, "has_active_manual_grant", lambda *_: False)
 
     await routine_functions.removeTempRoles(bot)
     member.remove_roles.assert_awaited_once_with(role)
@@ -294,6 +295,7 @@ async def test_duplicate_expired_grants_remove_role_once_and_delete_every_row(mo
     monkeypatch.setattr(routine_functions, "getTempRoleExpirationState", lambda _id: {"is_expired": True})
     monkeypatch.setattr(routine_functions, "hasActiveTempRoleSibling", lambda *_args: False)
     monkeypatch.setattr(routine_functions, "deleteTempRole", deleted)
+    monkeypatch.setattr(routine_functions, "has_active_manual_grant", lambda *_: False)
 
     await routine_functions.removeTempRoles(bot)
     member.remove_roles.assert_awaited_once_with(role)
