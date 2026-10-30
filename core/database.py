@@ -8596,6 +8596,7 @@ def list_pending_portaria_submissions() -> list[dict]:
             WHERE ff.type = 'portaria'
               AND fs.status = 'pending'
               AND fs.message_id IS NOT NULL
+            ORDER BY fs.id ASC
             """,
         )
         return cursor.fetchall() or []
