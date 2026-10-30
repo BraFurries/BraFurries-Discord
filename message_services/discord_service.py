@@ -9,6 +9,7 @@ from core.monthly_bumps import run_monthly_reward_cycle
 from core.auto_join_roles import is_sensitive
 from core.form_views import register_published_form_views
 from core.portaria_views import register_pending_portaria_views, sync_pending_portaria_clarification_buttons
+from core.temporary_role_reconciler import reconcile_temporary_roles
 from core.portaria_clarification import (register_open_clarification_ticket_views,
     reconcile_incomplete_clarification_tickets, reconcile_stale_closing_clarification_tickets)
 from message_services.bot_status_api import BotStatusApi
@@ -469,6 +470,7 @@ async def initialize_bot():
     register_pending_portaria_views(bot)
     register_open_clarification_ticket_views(bot)
     portariaClarificationButtonSync.start()
+    temporaryRoleGrantSync.start()
     register_published_form_views(bot)
     for guild in bot.guilds:
         await _refresh_invite_cache_for_guild(guild)
@@ -1150,6 +1152,17 @@ async def portariaClarificationButtonSync():
 
 @portariaClarificationButtonSync.before_loop
 async def beforePortariaClarificationButtonSync():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(minutes=1)
+async def temporaryRoleGrantSync():
+    """Apply the API's desired manual grants, including renewal and expiry."""
+    await reconcile_temporary_roles(bot, limit=20)
+
+
+@temporaryRoleGrantSync.before_loop
+async def beforeTemporaryRoleGrantSync():
     await bot.wait_until_ready()
 
 
