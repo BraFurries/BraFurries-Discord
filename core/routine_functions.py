@@ -7,9 +7,10 @@ import discord, asyncio, re, random, math, logging, weakref
 from discord.ext import commands
 from core.database import *
 from core.temp_role_locks import temp_role_lock
+from core.temporary_role_reconciler import has_active_manual_grant
 from core.levels import level_from_total_xp
 from core.xp_policy import XpPolicy
-from core.runtime_config import get_optional_discord_snowflake
+from core.runtime_config import get_optional_discord_snowflake, env_flag_enabled
 from schemas.models.bot import Config
 from schemas.models.bot import MyBot
 from datetime import datetime, timedelta, timezone
@@ -1228,6 +1229,13 @@ async def removeTempRoles(bot:commands.Bot):
                     TempRole['role_id'],
                     TempRole['id'],
                 )
+                # Legacy reward expiration cannot revoke an independently
+                # active manual grant from the API control plane.
+                if env_flag_enabled('TEMP_ROLE_MANAGEMENT_ENABLED', default=False):
+                    has_active_sibling = has_active_sibling or has_active_manual_grant(
+                        TempRole['disc_community_id'], guild_id,
+                        TempRole['user_id'], TempRole['role_id'],
+                    )
                 if has_active_sibling:
                     logger.info(
                         'Cargo temporário preservado por concessão ativa: guild_id=%s user_id=%s role_id=%s',
