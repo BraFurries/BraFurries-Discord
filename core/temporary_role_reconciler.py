@@ -36,8 +36,11 @@ def _due_grants(limit: int = 20) -> list[dict]:
                   OR (g.status='ACTIVE' AND g.sync_status='APPLIED'
                       AND (g.last_checked_at IS NULL OR
                            g.last_checked_at<UTC_TIMESTAMP(6)-INTERVAL 10 MINUTE))
+                  OR (g.sync_status='PROCESSING'
+                      AND g.last_checked_at<UTC_TIMESTAMP(6)-INTERVAL 5 MINUTE)
                ORDER BY CASE WHEN g.sync_status='PENDING' THEN 0
-                             WHEN g.sync_status='FAILED' THEN 1 ELSE 2 END,
+                             WHEN g.sync_status='PROCESSING' THEN 1
+                             WHEN g.sync_status='FAILED' THEN 2 ELSE 3 END,
                         g.last_checked_at,g.id
                LIMIT %s""",
             (max(1, min(limit, 100)),),
@@ -50,9 +53,14 @@ def _claim(row: dict) -> int | None:
     # same version, and an API renewal/cancellation invalidates the result.
     with pooled_connection() as cursor:
         cursor.execute(
-            """UPDATE community_temporary_role_grants SET version=version+1
+            """UPDATE community_temporary_role_grants
+               SET sync_status='PROCESSING',last_checked_at=UTC_TIMESTAMP(6),
+                   version=version+1
                WHERE id=%s AND community_id=%s AND guild_id=%s AND version=%s
-               AND status=%s AND sync_status=%s""",
+               AND status=%s AND sync_status=%s
+               AND (status<>'ACTIVE' OR expires_at>UTC_TIMESTAMP(6))
+               AND (sync_status<>'PROCESSING' OR
+                    last_checked_at<UTC_TIMESTAMP(6)-INTERVAL 5 MINUTE)""",
             (row["id"], row["community_id"], row["guild_id"], row["version"],
              row["status"], row["sync_status"]),
         )
@@ -68,7 +76,7 @@ def _finish(row: dict, claimed_version: int, *, added: bool, error: str | None) 
                    applied_at=CASE WHEN %s IS NULL THEN UTC_TIMESTAMP(6) ELSE applied_at END,
                    last_checked_at=UTC_TIMESTAMP(6),version=version+1
                WHERE id=%s AND community_id=%s AND guild_id=%s AND version=%s
-                 AND status=%s""",
+                 AND status=%s AND sync_status='PROCESSING'""",
             ("FAILED" if error else "APPLIED", error, int(added), error,
              row["id"], row["community_id"], row["guild_id"], claimed_version,
              row["status"]),
