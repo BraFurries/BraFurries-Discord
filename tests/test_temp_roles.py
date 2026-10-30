@@ -290,6 +290,26 @@ async def test_duplicate_expired_grants_remove_role_once_and_delete_every_row(mo
     assert deleted.call_args_list == [call(9), call(10)]
 
 
+@async_test
+async def test_legacy_expiration_preserves_active_manual_grant(monkeypatch):
+    role = SimpleNamespace(id=50, name="Role")
+    member = SimpleNamespace(id=7, display_name="User", roles=[role], remove_roles=AsyncMock())
+    record, bot, _sibling = cleanup_context(member=member, role=role, active_sibling=False)
+    deleted = Mock()
+    manual = Mock(return_value=True)
+    monkeypatch.setattr(routine_functions, "env_flag_enabled", lambda *_a, **_kw: True)
+    monkeypatch.setattr(routine_functions, "getExpiringTempRoles", lambda _guild_id: [record])
+    monkeypatch.setattr(routine_functions, "getTempRoleExpirationState", lambda _id: {"is_expired": True})
+    monkeypatch.setattr(routine_functions, "hasActiveTempRoleSibling", lambda *_a: False)
+    monkeypatch.setattr(routine_functions, "has_active_manual_grant", manual)
+    monkeypatch.setattr(routine_functions, "deleteTempRole", deleted)
+
+    await routine_functions.removeTempRoles(bot)
+    manual.assert_called_once_with(record["disc_community_id"], 1, 7, 50)
+    member.remove_roles.assert_not_awaited()
+    deleted.assert_called_once_with(record["id"])
+
+
 def test_has_active_temp_role_sibling_uses_full_identity_and_exclusion(monkeypatch):
     cursor = TempRoleCursor()
     cursor.fetchone = Mock(return_value={"1": 1})
