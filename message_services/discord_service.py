@@ -470,7 +470,7 @@ async def initialize_bot():
     register_pending_portaria_views(bot)
     register_open_clarification_ticket_views(bot)
     portariaClarificationButtonSync.start()
-    if env_flag_enabled('TEMP_ROLE_MANAGEMENT_ENABLED', default=False):
+    if os.getenv('TEMP_ROLE_MANAGEMENT_ENABLED', '').strip().lower() == 'true':
         temporaryRoleGrantSync.start()
     register_published_form_views(bot)
     for guild in bot.guilds:
