@@ -7,7 +7,7 @@ import discord, asyncio, re, random, math, logging, weakref
 from discord.ext import commands
 from core.database import *
 from core.temp_role_locks import temp_role_lock
-from core.temporary_role_reconciler import has_active_manual_grant
+from core.temporary_role_reconciler import has_active_manual_grant, transfer_owned_legacy_to_manual
 from core.levels import level_from_total_xp
 from core.xp_policy import XpPolicy
 from core.runtime_config import get_optional_discord_snowflake
@@ -1237,6 +1237,11 @@ async def removeTempRoles(bot:commands.Bot):
                         TempRole['user_id'], TempRole['role_id'],
                     )
                 if has_active_sibling:
+                    if TempRole.get('role_added_by_bot'):
+                        transfer_owned_legacy_to_manual(
+                            TempRole['id'], guild_id,
+                            TempRole['user_id'], TempRole['role_id'],
+                        )
                     logger.info(
                         'Cargo temporário preservado por concessão ativa: guild_id=%s user_id=%s role_id=%s',
                         guild_id,
