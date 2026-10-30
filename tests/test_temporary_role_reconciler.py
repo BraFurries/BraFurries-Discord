@@ -128,3 +128,21 @@ def test_queries_are_tenant_scoped_to_community_and_guild(monkeypatch):
     assert "cd.id=%s" in sql
     assert "g.guild_id=%s" in sql
     assert args==(13,1,7,50)
+
+
+def test_owned_expired_grant_transfers_removal_responsibility_to_active_successor(monkeypatch):
+    from contextlib import contextmanager
+    class Cursor:
+        def __init__(self): self.queries=[]
+        def execute(self, sql, args=()): self.queries.append((sql,args))
+        def fetchone(self): return {"exists": 1}
+    cursor=Cursor()
+    @contextmanager
+    def pool():
+        yield cursor
+    monkeypatch.setattr(worker,"pooled_connection",pool)
+    assert worker._other_active_grant(row("EXPIRED",owned=True))
+    sql,args=cursor.queries[-1]
+    assert "SET role_added_by_bot=1" in sql
+    assert "status='ACTIVE'" in sql
+    assert args==(4,1,7,50,9)
