@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import discord
+from datetime import datetime, timezone
 from core.database import pooled_connection
 from core.temp_role_locks import temp_role_lock
 
@@ -137,6 +138,14 @@ async def reconcile_grant(bot, row: dict) -> None:
     user_id=int(row["discord_user_id"])
     role_id=int(row["role_id"])
     async with temp_role_lock(guild_id,user_id,role_id):
+        # Do not add an already expired role just because its row was
+        # selected immediately before the DB expiry transition.
+        if row["status"]=="ACTIVE" and row.get("expires_at") is not None:
+            expiry=row["expires_at"]
+            if expiry.tzinfo is None:
+                expiry=expiry.replace(tzinfo=timezone.utc)
+            if expiry <= datetime.now(timezone.utc):
+                return
         claimed=_claim(row)
         if claimed is None:
             return
