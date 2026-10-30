@@ -19,25 +19,25 @@ def _due_grants(limit: int = 20) -> list[dict]:
         # Expiration is durable even across bot restarts. Only Coddy changes
         # operational status; no Web user impersonation is involved.
         cursor.execute(
-            """UPDATE community_temporary_role_grants
+            """UPDATE user_temp_roles
                SET status='EXPIRED',sync_status='PENDING',version=version+1
-               WHERE status='ACTIVE' AND expires_at<=UTC_TIMESTAMP(6)
-               ORDER BY expires_at,id LIMIT 100"""
+               WHERE grant_source='MANUAL' AND status='ACTIVE' AND expiring_date<=UTC_TIMESTAMP(6)
+               ORDER BY expiring_date,id LIMIT 100"""
         )
         cursor.execute(
             """SELECT g.id,g.community_id,g.guild_id,g.discord_user_id,g.role_id,
-                      g.status,g.sync_status,g.expires_at,g.role_added_by_bot,g.version
-               FROM community_temporary_role_grants g
+                      g.status,g.sync_status,g.expiring_date AS expires_at,g.role_added_by_bot,g.version
+               FROM user_temp_roles g
                JOIN community_discord cd ON cd.community_id=g.community_id
                     AND cd.guild_id=g.guild_id AND cd.active=1
-               WHERE g.sync_status='PENDING'
+               WHERE g.grant_source='MANUAL' AND (g.sync_status='PENDING'
                   OR (g.sync_status='FAILED'
                       AND g.updated_at<UTC_TIMESTAMP(6)-INTERVAL 5 MINUTE)
                   OR (g.status='ACTIVE' AND g.sync_status='APPLIED'
                       AND (g.last_checked_at IS NULL OR
                            g.last_checked_at<UTC_TIMESTAMP(6)-INTERVAL 10 MINUTE))
                   OR (g.sync_status='PROCESSING'
-                      AND g.last_checked_at<UTC_TIMESTAMP(6)-INTERVAL 5 MINUTE)
+                      AND g.last_checked_at<UTC_TIMESTAMP(6)-INTERVAL 5 MINUTE))
                ORDER BY CASE WHEN g.sync_status='PENDING' THEN 0
                              WHEN g.sync_status='PROCESSING' THEN 1
                              WHEN g.sync_status='FAILED' THEN 2 ELSE 3 END,
@@ -53,12 +53,12 @@ def _claim(row: dict) -> int | None:
     # same version, and an API renewal/cancellation invalidates the result.
     with pooled_connection() as cursor:
         cursor.execute(
-            """UPDATE community_temporary_role_grants
+            """UPDATE user_temp_roles
                SET sync_status='PROCESSING',last_checked_at=UTC_TIMESTAMP(6),
                    version=version+1
-               WHERE id=%s AND community_id=%s AND guild_id=%s AND version=%s
+               WHERE id=%s AND community_id=%s AND guild_id=%s AND grant_source='MANUAL' AND version=%s
                AND status=%s AND sync_status=%s
-               AND (status<>'ACTIVE' OR expires_at>UTC_TIMESTAMP(6))
+               AND (status<>'ACTIVE' OR expiring_date>UTC_TIMESTAMP(6))
                AND (sync_status<>'PROCESSING' OR
                     last_checked_at<UTC_TIMESTAMP(6)-INTERVAL 5 MINUTE)""",
             (row["id"], row["community_id"], row["guild_id"], row["version"],
@@ -70,12 +70,12 @@ def _claim(row: dict) -> int | None:
 def _finish(row: dict, claimed_version: int, *, added: bool, error: str | None) -> bool:
     with pooled_connection() as cursor:
         cursor.execute(
-            """UPDATE community_temporary_role_grants
+            """UPDATE user_temp_roles
                SET sync_status=%s,last_error_code=%s,
                    role_added_by_bot=CASE WHEN role_added_by_bot=1 THEN 1 ELSE %s END,
                    applied_at=CASE WHEN %s IS NULL THEN UTC_TIMESTAMP(6) ELSE applied_at END,
                    last_checked_at=UTC_TIMESTAMP(6),version=version+1
-               WHERE id=%s AND community_id=%s AND guild_id=%s AND version=%s
+               WHERE id=%s AND community_id=%s AND guild_id=%s AND grant_source='MANUAL' AND version=%s
                  AND status=%s AND sync_status='PROCESSING'""",
             ("FAILED" if error else "APPLIED", error, int(added), error,
              row["id"], row["community_id"], row["guild_id"], claimed_version,
@@ -93,9 +93,9 @@ def _remember_added_after_race(row: dict) -> None:
     """
     with pooled_connection() as cursor:
         cursor.execute(
-            """UPDATE community_temporary_role_grants
+            """UPDATE user_temp_roles
                SET role_added_by_bot=1
-               WHERE id=%s AND community_id=%s AND guild_id=%s
+               WHERE grant_source='MANUAL' AND id=%s AND community_id=%s AND guild_id=%s
                  AND role_added_by_bot=0""",
             (row["id"],row["community_id"],row["guild_id"]),
         )
@@ -104,12 +104,14 @@ def _remember_added_after_race(row: dict) -> None:
 def _other_active_grant(row: dict) -> bool:
     with pooled_connection() as cursor:
         cursor.execute(
-            """SELECT 1 FROM community_temporary_role_grants
-               WHERE community_id=%s AND guild_id=%s AND discord_user_id=%s
-                 AND role_id=%s AND id<>%s AND status='ACTIVE'
-                 AND expires_at>UTC_TIMESTAMP(6) LIMIT 1""",
+            """SELECT 1 FROM user_temp_roles t
+               LEFT JOIN user_discord ud ON ud.id=t.disc_user_id
+               WHERE t.community_id=%s AND t.guild_id=%s
+                 AND (t.discord_user_id=%s OR ud.discord_user_id=%s)
+                 AND t.role_id=%s AND t.id<>%s AND t.status='ACTIVE'
+                 AND t.expiring_date>UTC_TIMESTAMP(6) LIMIT 1""",
             (row["community_id"],row["guild_id"],row["discord_user_id"],
-             row["role_id"],row["id"]),
+             row["discord_user_id"],row["role_id"],row["id"]),
         )
         if cursor.fetchone():
             if row["role_added_by_bot"]:
@@ -117,28 +119,16 @@ def _other_active_grant(row: dict) -> bool:
                 # moves to the newer ACTIVE manual grant. The newer grant
                 # must remove it when it ultimately ends.
                 cursor.execute(
-                    """UPDATE community_temporary_role_grants
+                    """UPDATE user_temp_roles
                        SET role_added_by_bot=1
-                       WHERE community_id=%s AND guild_id=%s
+                       WHERE grant_source='MANUAL' AND community_id=%s AND guild_id=%s
                          AND discord_user_id=%s AND role_id=%s AND id<>%s
-                         AND status='ACTIVE' AND expires_at>UTC_TIMESTAMP(6)""",
+                         AND grant_source='MANUAL' AND status='ACTIVE' AND expiring_date>UTC_TIMESTAMP(6)""",
                     (row["community_id"],row["guild_id"],row["discord_user_id"],
                      row["role_id"],row["id"]),
                 )
             return True
-        # The original legacy system handles bumps/rewards independently.
-        # Never revoke a role while a legacy grant still covers the target.
-        cursor.execute(
-            """SELECT 1 FROM user_temp_roles t
-               JOIN community_discord cd ON cd.id=t.disc_community_id
-               JOIN user_discord ud ON ud.id=t.disc_user_id
-               WHERE cd.community_id=%s AND cd.guild_id=%s
-                 AND ud.discord_user_id=%s AND t.role_id=%s
-                 AND t.expiring_date>NOW() LIMIT 1""",
-            (row["community_id"],row["guild_id"],
-             row["discord_user_id"],row["role_id"]),
-        )
-        return cursor.fetchone() is not None
+        return False
 
 
 def has_active_manual_grant(
@@ -147,12 +137,12 @@ def has_active_manual_grant(
     """Called by legacy expiration before removing a shared Discord role."""
     with pooled_connection() as cursor:
         cursor.execute(
-            """SELECT 1 FROM community_temporary_role_grants g
+            """SELECT 1 FROM user_temp_roles g
                JOIN community_discord cd ON cd.community_id=g.community_id
                  AND cd.guild_id=g.guild_id
                WHERE cd.id=%s AND g.guild_id=%s AND g.discord_user_id=%s
-                 AND g.role_id=%s AND g.status='ACTIVE'
-                 AND g.expires_at>UTC_TIMESTAMP(6) LIMIT 1""",
+                 AND g.role_id=%s AND g.grant_source='MANUAL' AND g.status='ACTIVE'
+                 AND g.expiring_date>UTC_TIMESTAMP(6) LIMIT 1""",
             (community_id,guild_id,discord_user_id,role_id),
         )
         return cursor.fetchone() is not None
