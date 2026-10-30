@@ -148,6 +148,25 @@ def test_owned_expired_grant_transfers_removal_responsibility_to_active_successo
     assert args==(4,1,7,50,9)
 
 
+def test_legacy_expiration_handoff_includes_pre_migration_rewards_without_owned_flag(monkeypatch):
+    from contextlib import contextmanager
+    class Cursor:
+        def __init__(self): self.calls=[]
+        def execute(self,sql,args): self.calls.append((sql,args))
+    cursor=Cursor()
+    @contextmanager
+    def pool(): yield cursor
+    monkeypatch.setattr(worker,"pooled_connection",pool)
+    worker.transfer_legacy_expiration_to_manual(77,1,7,50)
+    sql,params=cursor.calls[0]
+    assert "legacy.grant_source='LEGACY'" in sql
+    assert "legacy.status='ACTIVE'" in sql
+    assert "manual.grant_source='MANUAL'" in sql
+    assert "manual.status='ACTIVE'" in sql
+    assert "legacy.role_added_by_bot=1" not in sql
+    assert params==(77,1,7,50)
+
+
 def test_cancel_retries_when_discord_member_lookup_temporarily_fails(monkeypatch):
     guild,role,member=make_guild(present=True)
     guild.get_member=lambda _:None
