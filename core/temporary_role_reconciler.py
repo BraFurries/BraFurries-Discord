@@ -61,7 +61,8 @@ def _finish(row: dict, claimed_version: int, *, added: bool, error: str | None) 
     with pooled_connection() as cursor:
         cursor.execute(
             """UPDATE community_temporary_role_grants
-               SET sync_status=%s,last_error_code=%s,role_added_by_bot=%s,
+               SET sync_status=%s,last_error_code=%s,
+                   role_added_by_bot=CASE WHEN role_added_by_bot=1 THEN 1 ELSE %s END,
                    applied_at=CASE WHEN %s IS NULL THEN UTC_TIMESTAMP(6) ELSE applied_at END,
                    last_checked_at=UTC_TIMESTAMP(6),version=version+1
                WHERE id=%s AND community_id=%s AND guild_id=%s AND version=%s
@@ -84,6 +85,19 @@ def _other_active_grant(row: dict) -> bool:
              row["role_id"],row["id"]),
         )
         if cursor.fetchone():
+            if row["role_added_by_bot"]:
+                # Ownership of a role previously added by this manual source
+                # moves to the newer ACTIVE manual grant. The newer grant
+                # must remove it when it ultimately ends.
+                cursor.execute(
+                    """UPDATE community_temporary_role_grants
+                       SET role_added_by_bot=1
+                       WHERE community_id=%s AND guild_id=%s
+                         AND discord_user_id=%s AND role_id=%s AND id<>%s
+                         AND status='ACTIVE' AND expires_at>UTC_TIMESTAMP(6)""",
+                    (row["community_id"],row["guild_id"],row["discord_user_id"],
+                     row["role_id"],row["id"]),
+                )
             return True
         # The original legacy system handles bumps/rewards independently.
         # Never revoke a role while a legacy grant still covers the target.
