@@ -6,6 +6,7 @@ No DDL, no administrative policy writes and no cross-guild operations here.
 from __future__ import annotations
 
 import logging
+import discord
 from core.database import pooled_connection
 from core.temp_role_locks import temp_role_lock
 
@@ -154,9 +155,13 @@ async def reconcile_grant(bot, row: dict) -> None:
             if member is None:
                 try:
                     member=await guild.fetch_member(user_id)
-                except Exception:
+                except discord.NotFound:
                     if row["status"]=="ACTIVE":
                         raise ValueError("MEMBER_NOT_FOUND")
+                except discord.Forbidden:
+                    raise ValueError("MEMBER_LOOKUP_FORBIDDEN")
+                except discord.HTTPException:
+                    raise ValueError("MEMBER_LOOKUP_FAILED")
             if member is not None and role is not None:
                 bot_member=guild.me
                 if bot_member is None or not bot_member.guild_permissions.manage_roles:
