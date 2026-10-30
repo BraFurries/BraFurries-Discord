@@ -4979,7 +4979,7 @@ async def _assignTempRoleLocked(
     try:
         with pooled_connection() as cursor:
             cursor.execute(
-                "SELECT id FROM community_discord WHERE guild_id = %s", (guild_id,)
+                "SELECT id, community_id FROM community_discord WHERE guild_id = %s", (guild_id,)
             )
             row = cursor.fetchone()
             if not row:
@@ -4988,6 +4988,7 @@ async def _assignTempRoleLocked(
                 )
                 return False
             discord_community_id = row["id"]
+            community_id = row["community_id"]
 
             user_id = includeUser(discord_user, guild_id)
             cursor.execute(
@@ -5023,6 +5024,7 @@ async def _assignTempRoleLocked(
                 WHERE disc_community_id = %s
                   AND disc_user_id = %s
                   AND role_id = %s
+                  AND grant_source='LEGACY' AND status='ACTIVE'
                 ORDER BY expiring_date DESC, id ASC
                 FOR UPDATE
                 """,
@@ -5042,19 +5044,24 @@ async def _assignTempRoleLocked(
                     )
                 for duplicate in grants[1:]:
                     cursor.execute(
-                        "DELETE FROM user_temp_roles WHERE id = %s",
+                        "UPDATE user_temp_roles SET status='CANCELLED',version=version+1 "
+                        "WHERE id = %s AND grant_source='LEGACY' AND status='ACTIVE'",
                         (duplicate["id"],),
                     )
             else:
                 cursor.execute(
-                    "INSERT INTO user_temp_roles (disc_community_id, disc_user_id, role_id, expiring_date, reason)"
-                    " VALUES (%s, %s, %s, %s, %s)",
+                    "INSERT INTO user_temp_roles (disc_community_id, disc_user_id, role_id, expiring_date, reason,"
+                    " community_id,guild_id,discord_user_id,grant_source,sync_status)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'LEGACY', 'APPLIED')",
                     (
                         discord_community_id,
                         discord_user_id,
                         role.id,
                         expiring_date,
                         reason,
+                        community_id,
+                        guild_id,
+                        discord_user.id,
                     ),
                 )
     except Exception as e:
@@ -5090,6 +5097,7 @@ def getExpiringTempRoles(guild_id:int):
             JOIN user_discord ON user_temp_roles.disc_user_id = user_discord.id
             WHERE user_temp_roles.disc_community_id = %s
               AND user_temp_roles.expiring_date <= NOW()
+              AND user_temp_roles.grant_source='LEGACY' AND user_temp_roles.status='ACTIVE'
             ORDER BY user_temp_roles.expiring_date ASC, user_temp_roles.id ASC
             """,
             (community["id"],),
@@ -5112,7 +5120,7 @@ def hasActiveTempRoleSibling(
               AND disc_user_id = %s
               AND role_id = %s
               AND id <> %s
-              AND expiring_date > NOW()
+              AND expiring_date > NOW() AND status='ACTIVE' AND grant_source='LEGACY'
             LIMIT 1
             """,
             (discord_community_id, discord_user_id, role_id, excluded_id),
@@ -5126,7 +5134,7 @@ def getTempRoleExpirationState(temp_role_id: int) -> dict | None:
             """
             SELECT expiring_date, expiring_date <= NOW() AS is_expired
             FROM user_temp_roles
-            WHERE id = %s
+            WHERE id = %s AND grant_source='LEGACY' AND status='ACTIVE'
             """,
             (temp_role_id,),
         )
@@ -5143,7 +5151,8 @@ def deleteTempRole(tempRoleDBId:int):
     with pooled_connection() as cursor:
         try:
             cursor.execute(
-                "DELETE FROM user_temp_roles WHERE id = %s", (tempRoleDBId,)
+                "UPDATE user_temp_roles SET status='EXPIRED',version=version+1 "
+                "WHERE id = %s AND grant_source='LEGACY' AND status='ACTIVE'", (tempRoleDBId,)
             )
             return True
         except Exception as e:
