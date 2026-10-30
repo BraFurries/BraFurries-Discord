@@ -84,6 +84,23 @@ def _finish(row: dict, claimed_version: int, *, added: bool, error: str | None) 
         return cursor.rowcount==1
 
 
+def _remember_added_after_race(row: dict) -> None:
+    """A successful Discord add must remain owned if API changed the grant.
+
+    A later cancellation or renewal can race between the Discord side effect
+    and _finish. Preserve only confirmed additions; never claim ownership of
+    pre-existing member roles.
+    """
+    with pooled_connection() as cursor:
+        cursor.execute(
+            """UPDATE community_temporary_role_grants
+               SET role_added_by_bot=1
+               WHERE id=%s AND community_id=%s AND guild_id=%s
+                 AND role_added_by_bot=0""",
+            (row["id"],row["community_id"],row["guild_id"]),
+        )
+
+
 def _other_active_grant(row: dict) -> bool:
     with pooled_connection() as cursor:
         cursor.execute(
@@ -158,6 +175,7 @@ async def reconcile_grant(bot, row: dict) -> None:
         if claimed is None:
             return
         added=bool(row["role_added_by_bot"])
+        added_now=False
         error: str | None=None
         try:
             guild=bot.get_guild(guild_id)
@@ -189,6 +207,7 @@ async def reconcile_grant(bot, row: dict) -> None:
                     if role not in member.roles:
                         await member.add_roles(role,reason=f"BraFurries: cargo temporário #{row['id']}")
                         added=True
+                        added_now=True
                 elif added and role in member.roles and not _other_active_grant(row):
                     await member.remove_roles(role,reason=f"BraFurries: cargo temporário encerrado #{row['id']}")
             # A missing member on revoke means there is no accessible Discord
@@ -199,9 +218,21 @@ async def reconcile_grant(bot, row: dict) -> None:
             error="DISCORD_OPERATION_ERROR"
             log.exception("Temporary role sync failed guild=%s grant=%s",
                           guild_id,row["id"])
-        if not _finish(row,claimed,added=added,error=error):
-            log.info("Temporary role changed concurrently; retry next scan grant=%s",
-                     row["id"])
+        try:
+            finished=_finish(row,claimed,added=added,error=error)
+        except Exception:
+            log.exception("Temporary role result persistence failed guild=%s grant=%s",
+                          guild_id,row["id"])
+            finished=False
+        if not finished and added_now:
+            try:
+                _remember_added_after_race(row)
+            except Exception:
+                log.exception("Manual role may need ownership reconciliation guild=%s grant=%s",
+                              guild_id,row["id"])
+        if not finished:
+            log.info("Temporary role result requires retry guild=%s grant=%s",
+                     guild_id,row["id"])
         elif error:
             log.warning("Temporary role awaiting retry guild=%s grant=%s reason=%s",
                         guild_id,row["id"],error)
