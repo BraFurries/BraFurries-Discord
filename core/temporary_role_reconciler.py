@@ -106,10 +106,12 @@ def has_active_manual_grant(
     """Called by legacy expiration before removing a shared Discord role."""
     with pooled_connection() as cursor:
         cursor.execute(
-            """SELECT 1 FROM community_temporary_role_grants
-               WHERE community_id=%s AND guild_id=%s AND discord_user_id=%s
-                 AND role_id=%s AND status='ACTIVE'
-                 AND expires_at>UTC_TIMESTAMP(6) LIMIT 1""",
+            """SELECT 1 FROM community_temporary_role_grants g
+               JOIN community_discord cd ON cd.community_id=g.community_id
+                 AND cd.guild_id=g.guild_id
+               WHERE cd.id=%s AND g.guild_id=%s AND g.discord_user_id=%s
+                 AND g.role_id=%s AND g.status='ACTIVE'
+                 AND g.expires_at>UTC_TIMESTAMP(6) LIMIT 1""",
             (community_id,guild_id,discord_user_id,role_id),
         )
         return cursor.fetchone() is not None
