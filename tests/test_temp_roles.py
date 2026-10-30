@@ -29,8 +29,8 @@ class TempRoleCursor:
     def execute(self, query, params=None):
         normalized = " ".join(query.split())
         self.executed.append((normalized, params))
-        if normalized.startswith("SELECT id FROM community_discord"):
-            self.result = {"id": 11} if self.community else None
+        if normalized.startswith("SELECT id, community_id FROM community_discord"):
+            self.result = {"id": 11, "community_id": 5} if self.community else None
         elif normalized.startswith("SELECT id FROM user_discord"):
             self.result = {"id": 22} if self.user else None
         elif "FROM user_temp_roles" in normalized and "FOR UPDATE" in normalized:
@@ -51,10 +51,15 @@ class TempRoleCursor:
                 }
             )
         elif normalized.startswith("UPDATE user_temp_roles"):
-            grant = next(grant for grant in self.grants if grant["id"] == params[2])
-            grant.update(expiring_date=params[0], reason=params[1])
-        elif normalized.startswith("DELETE FROM user_temp_roles"):
-            self.grants = [grant for grant in self.grants if grant["id"] != params[0]]
+            if "SET expiring_date" in normalized:
+                grant = next(grant for grant in self.grants if grant["id"] == params[2])
+                grant.update(expiring_date=params[0], reason=params[1])
+            elif "SET status='CANCELLED'" in normalized:
+                grant = next(grant for grant in self.grants if grant["id"] == params[0])
+                grant["status"] = "CANCELLED"
+            elif "SET status='EXPIRED'" in normalized:
+                grant = next(grant for grant in self.grants if grant["id"] == params[0])
+                grant["status"] = "EXPIRED"
 
     def fetchone(self):
         return self.result
@@ -140,7 +145,12 @@ async def test_assign_temp_role_coalesces_duplicates_into_latest_grant(monkeypat
     monkeypatch.setattr(database, "includeUser", lambda _member, _guild_id: 33)
 
     assert await database.assignTempRole(1, member, role.id, datetime(2030, 1, 4), "newest")
-    assert cursor.grants == [{"id": 4, "expiring_date": datetime(2030, 1, 4), "reason": "newest"}]
+    assert len(cursor.grants) == 3
+    assert [(g["id"], g.get("status", "ACTIVE")) for g in cursor.grants] == [
+        (3, "CANCELLED"), (4, "ACTIVE"), (5, "CANCELLED")
+    ]
+    assert cursor.grants[1]["expiring_date"] == datetime(2030, 1, 4)
+    assert not any(query.startswith("DELETE FROM user_temp_roles") for query, _ in cursor.executed)
 
 
 @async_test
@@ -297,7 +307,6 @@ async def test_legacy_expiration_preserves_active_manual_grant(monkeypatch):
     record, bot, _sibling = cleanup_context(member=member, role=role, active_sibling=False)
     deleted = Mock()
     manual = Mock(return_value=True)
-    monkeypatch.setenv("TEMP_ROLE_MANAGEMENT_ENABLED", "true")
     monkeypatch.setattr(routine_functions, "getExpiringTempRoles", lambda _guild_id: [record])
     monkeypatch.setattr(routine_functions, "getTempRoleExpirationState", lambda _id: {"is_expired": True})
     monkeypatch.setattr(routine_functions, "hasActiveTempRoleSibling", lambda *_a: False)
