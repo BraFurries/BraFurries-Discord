@@ -194,3 +194,26 @@ def test_processing_lease_must_own_current_version_to_mark_finished(monkeypatch)
     assert "sync_status='PROCESSING'" in sql
     assert "version=%s" in sql
     assert params[-5:]==(9,4,1,2,"ACTIVE")
+
+
+def test_confirmed_add_remains_owned_after_concurrent_cancel(monkeypatch):
+    guild,role,member=make_guild()
+    bot,_,finish=prepare(monkeypatch,guild)
+    finish.return_value=False
+    remember=Mock()
+    monkeypatch.setattr(worker,"_remember_added_after_race",remember)
+    asyncio.run(worker.reconcile_grant(bot,row()))
+    member.add_roles.assert_awaited_once()
+    remember.assert_called_once()
+    assert remember.call_args.args[0]["id"]==9
+
+
+def test_preexisting_role_is_never_claimed_after_concurrent_cancel(monkeypatch):
+    guild,role,member=make_guild(present=True)
+    bot,_,finish=prepare(monkeypatch,guild)
+    finish.return_value=False
+    remember=Mock()
+    monkeypatch.setattr(worker,"_remember_added_after_race",remember)
+    asyncio.run(worker.reconcile_grant(bot,row()))
+    member.add_roles.assert_not_awaited()
+    remember.assert_not_called()
