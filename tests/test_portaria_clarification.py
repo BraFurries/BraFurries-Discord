@@ -707,3 +707,15 @@ def test_recover_stale_closing_defers_database_completion_after_discord_failure(
     asyncio.run(handler.reconcile_stale_closing_clarification_tickets(bot))
     channel.edit.assert_awaited_once()
     closed.assert_not_called()
+
+
+def test_retry_does_not_replace_original_closing_actor_or_reason(monkeypatch):
+    """A later Staff retry must keep the audited closing intent unchanged."""
+    cursor = Cursor()
+    patch_db(monkeypatch, cursor)
+    assert store.mark_closed(42, 222, 444, "Tentativa posterior de encerramento")
+    sql, args = cursor.calls[0]
+    assert "closed_by_discord_user_id = COALESCE(closed_by_discord_user_id, %s)" in sql
+    assert "close_reason = COALESCE(close_reason, %s)" in sql
+    assert "status = 'CLOSING'" in sql
+    assert args == (444, "Tentativa posterior de encerramento", 42, 222)
