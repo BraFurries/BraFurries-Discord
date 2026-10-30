@@ -5051,8 +5051,8 @@ async def _assignTempRoleLocked(
             else:
                 cursor.execute(
                     "INSERT INTO user_temp_roles (disc_community_id, disc_user_id, role_id, expiring_date, reason,"
-                    " community_id,guild_id,discord_user_id,grant_source,sync_status)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'LEGACY', 'APPLIED')",
+                    " community_id,guild_id,discord_user_id,grant_source,sync_status,role_added_by_bot)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'LEGACY', 'APPLIED', %s)",
                     (
                         discord_community_id,
                         discord_user_id,
@@ -5062,6 +5062,7 @@ async def _assignTempRoleLocked(
                         community_id,
                         guild_id,
                         discord_user.id,
+                        int(role_added_now),
                     ),
                 )
     except Exception as e:
@@ -5092,6 +5093,7 @@ def getExpiringTempRoles(guild_id:int):
                    user_temp_roles.disc_community_id,
                    user_temp_roles.disc_user_id,
                    user_temp_roles.role_id,
+                   user_temp_roles.role_added_by_bot,
                    user_discord.discord_user_id AS user_id
             FROM user_temp_roles
             JOIN user_discord ON user_temp_roles.disc_user_id = user_discord.id
