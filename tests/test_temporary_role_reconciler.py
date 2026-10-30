@@ -146,3 +146,15 @@ def test_owned_expired_grant_transfers_removal_responsibility_to_active_successo
     assert "SET role_added_by_bot=1" in sql
     assert "status='ACTIVE'" in sql
     assert args==(4,1,7,50,9)
+
+
+def test_cancel_retries_when_discord_member_lookup_temporarily_fails(monkeypatch):
+    guild,role,member=make_guild(present=True)
+    guild.get_member=lambda _:None
+    response=SimpleNamespace(status=503,reason="Service Unavailable")
+    guild.fetch_member=AsyncMock(side_effect=worker.discord.HTTPException(
+        response,{"message":"Unavailable","code":0}))
+    bot,_,finish=prepare(monkeypatch,guild)
+    asyncio.run(worker.reconcile_grant(bot,row("CANCELLED",owned=True)))
+    assert finish.call_args.kwargs["error"]=="MEMBER_LOOKUP_FAILED"
+    member.remove_roles.assert_not_awaited()
