@@ -7,7 +7,7 @@ import discord, asyncio, re, random, math, logging, weakref
 from discord.ext import commands
 from core.database import *
 from core.temp_role_locks import temp_role_lock
-from core.temporary_role_reconciler import has_active_manual_grant, transfer_owned_legacy_to_manual
+from core.temporary_role_reconciler import has_active_manual_grant, transfer_legacy_expiration_to_manual
 from core.levels import level_from_total_xp
 from core.xp_policy import XpPolicy
 from core.runtime_config import get_optional_discord_snowflake
@@ -1223,22 +1223,24 @@ async def removeTempRoles(bot:commands.Bot):
                     TempRole['disc_user_id'],
                     TempRole['role_id'],
                 )
-                has_active_sibling = hasActiveTempRoleSibling(
+                has_legacy_sibling = hasActiveTempRoleSibling(
                     TempRole['disc_community_id'],
                     TempRole['disc_user_id'],
                     TempRole['role_id'],
                     TempRole['id'],
                 )
-                # Legacy reward expiration cannot revoke an independently
-                # active manual grant from the API control plane.
-                if not has_active_sibling:
-                    has_active_sibling = has_active_manual_grant(
-                        TempRole['disc_community_id'], guild_id,
-                        TempRole['user_id'], TempRole['role_id'],
-                    )
-                if has_active_sibling:
-                    if TempRole.get('role_added_by_bot'):
-                        transfer_owned_legacy_to_manual(
+                # Legacy reward expiration must preserve a manual grant.
+                # Pre-migration legacy rows have role_added_by_bot=0 even
+                # though the old expiry path would have removed their role.
+                # Transfer cleanup responsibility before archiving the
+                # legacy row, including those migrated historical rows.
+                has_manual_sibling = has_active_manual_grant(
+                    TempRole['disc_community_id'], guild_id,
+                    TempRole['user_id'], TempRole['role_id'],
+                )
+                if has_legacy_sibling or has_manual_sibling:
+                    if has_manual_sibling:
+                        transfer_legacy_expiration_to_manual(
                             TempRole['id'], guild_id,
                             TempRole['user_id'], TempRole['role_id'],
                         )
