@@ -14,6 +14,42 @@ from core.temp_role_locks import temp_role_lock
 log = logging.getLogger(__name__)
 
 
+
+def _backfill_legacy_identity() -> None:
+    """Repair legacy writes made between the schema deployment and bot rollout."""
+    with pooled_connection() as cursor:
+        cursor.execute(
+            """UPDATE user_temp_roles t
+               JOIN community_discord cd ON cd.id=t.disc_community_id
+               JOIN user_discord ud ON ud.id=t.disc_user_id
+               SET t.community_id=cd.community_id, t.guild_id=cd.guild_id,
+                   t.discord_user_id=ud.discord_user_id
+               WHERE t.grant_source='LEGACY' AND
+                 (t.community_id IS NULL OR t.guild_id IS NULL
+                  OR t.discord_user_id IS NULL)"""
+        )
+
+
+def transfer_owned_legacy_to_manual(
+    legacy_grant_id: int, guild_id: int, discord_user_id: int, role_id: int
+) -> None:
+    """Only transfer a legacy-owned role to an active manual grant, never an unknown one."""
+    with pooled_connection() as cursor:
+        cursor.execute(
+            """UPDATE user_temp_roles manual
+               JOIN user_temp_roles legacy ON legacy.id=%s
+               SET manual.role_added_by_bot=1
+               WHERE legacy.grant_source='LEGACY'
+                 AND legacy.role_added_by_bot=1
+                 AND manual.grant_source='MANUAL'
+                 AND manual.disc_community_id=legacy.disc_community_id
+                 AND manual.guild_id=%s AND manual.discord_user_id=%s
+                 AND manual.role_id=%s AND manual.status='ACTIVE'
+                 AND manual.expiring_date>UTC_TIMESTAMP(6)""",
+            (legacy_grant_id,guild_id,discord_user_id,role_id),
+        )
+
+
 def _due_grants(limit: int = 20) -> list[dict]:
     with pooled_connection() as cursor:
         # Expiration is durable even across bot restarts. Only Coddy changes
@@ -230,6 +266,7 @@ async def reconcile_grant(bot, row: dict) -> None:
 
 async def reconcile_temporary_roles(bot, *, limit: int = 20) -> None:
     try:
+        _backfill_legacy_identity()
         rows=_due_grants(limit)
     except Exception:
         log.exception("Cannot load manual temporary role desired state")
