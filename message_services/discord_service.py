@@ -69,6 +69,7 @@ AUTO_JOIN_SENSITIVE_PERMISSIONS = ("ban_members", "manage_roles", "manage_channe
 invite_cache: dict[int, dict[str, int]] = {}
 status_api: BotStatusApi | None = None
 _portaria_clarification_button_sync_offset = 0
+_portaria_clarification_sync_failures: dict[tuple[int, int], str] = {}
 community_lifecycle_client: CommunityLifecycleApiClient | None = None
 _membership_recovery = MembershipRecoveryQueue()
 _membership_startup_complete = asyncio.Event()
@@ -1133,13 +1134,14 @@ async def on_user_update(before: discord.User, after: discord.User):
 async def cronJobs12h():
     await removeTempRoles(bot)
 
-@tasks.loop(minutes=3)
+@tasks.loop(minutes=1)
 async def portariaClarificationButtonSync():
     """Incrementally reconcile Discord buttons after the site configuration changes."""
     global _portaria_clarification_button_sync_offset
     _portaria_clarification_button_sync_offset = (
         await sync_pending_portaria_clarification_buttons(
-            bot, offset=_portaria_clarification_button_sync_offset, limit=12)
+            bot, offset=_portaria_clarification_button_sync_offset, limit=12,
+            failure_cache=_portaria_clarification_sync_failures)
     )
     await reconcile_incomplete_clarification_tickets(bot)
 

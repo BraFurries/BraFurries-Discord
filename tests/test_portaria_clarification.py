@@ -466,3 +466,92 @@ def test_pending_form_lookup_includes_discord_channel_for_button_sync(monkeypatc
     assert "fs.channel_id" in sql
     assert "fs.guild_id" in sql
     assert "fs.message_id" in sql
+    assert "ORDER BY fs.id ASC" in sql
+
+
+def test_portaria_sync_explains_unrecognized_legacy_components(monkeypatch, caplog):
+    """Do not overwrite a message just because an old DB row refers to it."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    import logging
+
+    class FakeChannel:
+        def __init__(self, message):
+            self.fetch_message = AsyncMock(return_value=message)
+
+    form = {"id": 7, "guild_id": 222, "channel_id": 99, "message_id": 44}
+    message = SimpleNamespace(
+        id=44,
+        components=[SimpleNamespace(children=[
+            SimpleNamespace(custom_id="legacy_approval:7"),
+            SimpleNamespace(custom_id="legacy_rejection:7"),
+        ])],
+        edit=AsyncMock(),
+    )
+    channel = FakeChannel(message)
+    guild = SimpleNamespace(get_channel=lambda _: channel)
+    bot = SimpleNamespace(get_guild=lambda _: guild, add_view=Mock())
+    monkeypatch.setattr(portaria_views, "list_pending_portaria_submissions",
+                        lambda: [form])
+    monkeypatch.setattr(portaria_views.discord, "TextChannel", FakeChannel)
+    monkeypatch.setattr(portaria_views, "ticket_settings",
+                        lambda _: {"clarification_tickets_enabled": 1})
+    problems = {}
+    with caplog.at_level(logging.WARNING, logger="core.portaria_views"):
+        asyncio.run(portaria_views.sync_pending_portaria_clarification_buttons(
+            bot, failure_cache=problems))
+        asyncio.run(portaria_views.sync_pending_portaria_clarification_buttons(
+            bot, failure_cache=problems))
+    message.edit.assert_not_awaited()
+    assert problems[(222, 7)].startswith("unrecognized_buttons:")
+    assert caplog.text.count("reason=unrecognized_buttons") == 1
+
+
+def test_portaria_sync_retries_404_without_repeating_same_warning(monkeypatch, caplog):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    import logging
+
+    class FakeChannel:
+        def __init__(self):
+            self.fetch_message = AsyncMock()
+
+    form = {"id": 7, "guild_id": 222, "channel_id": 99, "message_id": 44}
+    channel = FakeChannel()
+    response = SimpleNamespace(status=404, reason="Not Found")
+    channel.fetch_message.side_effect = portaria_views.discord.NotFound(
+        response, {"code": 10008, "message": "Unknown Message"})
+    guild = SimpleNamespace(get_channel=lambda _: channel)
+    bot = SimpleNamespace(get_guild=lambda _: guild, add_view=Mock())
+    monkeypatch.setattr(portaria_views, "list_pending_portaria_submissions",
+                        lambda: [form])
+    monkeypatch.setattr(portaria_views.discord, "TextChannel", FakeChannel)
+    monkeypatch.setattr(portaria_views, "ticket_settings",
+                        lambda _: {"clarification_tickets_enabled": 1})
+    problems = {}
+    with caplog.at_level(logging.WARNING, logger="core.portaria_views"):
+        asyncio.run(portaria_views.sync_pending_portaria_clarification_buttons(
+            bot, failure_cache=problems))
+        asyncio.run(portaria_views.sync_pending_portaria_clarification_buttons(
+            bot, failure_cache=problems))
+    assert channel.fetch_message.await_count == 2  # retry remains enabled
+    assert caplog.text.count("reason=discord_http_error") == 1
+    assert "status=404" in caplog.text
+    assert "code=10008" in caplog.text
+
+    # If the old message becomes reachable, the next cycle updates it and
+    # clears the warning so a new failure can be reported normally.
+    message = SimpleNamespace(
+        id=44,
+        components=[SimpleNamespace(children=[
+            SimpleNamespace(custom_id=f"{portaria_views.PORTARIA_APPROVE_PREFIX}7"),
+            SimpleNamespace(custom_id=f"{portaria_views.PORTARIA_REJECT_PREFIX}7"),
+        ])],
+        edit=AsyncMock(),
+    )
+    channel.fetch_message.side_effect = None
+    channel.fetch_message.return_value = message
+    asyncio.run(portaria_views.sync_pending_portaria_clarification_buttons(
+        bot, failure_cache=problems))
+    message.edit.assert_awaited_once()
+    assert problems == {}
