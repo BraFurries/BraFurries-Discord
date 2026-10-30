@@ -205,18 +205,44 @@ def mark_open_failed(ticket_id: int, guild_id: int, code: str) -> None:
             (code[:64], ticket_id, guild_id))
 
 
-def claim_close(ticket_id: int, guild_id: int) -> bool:
+def claim_close(ticket_id: int, guild_id: int, actor_id: int, reason: str) -> bool:
+    """Save the closing intent *before* revoking Discord access.
+
+    If Discord succeeds and the database commit fails, a later recovery can
+    complete the same ticket with the original actor/reason. Stale retries may
+    refresh the lease but must not overwrite the initial closing intent.
+    """
+    clean = (reason or "").strip()
+    if not 10 <= len(clean) <= 1024:
+        raise ValueError("Informe um motivo de 10 a 1024 caracteres.")
     with pooled_connection() as cursor:
         cursor.execute(
             """UPDATE portaria_clarification_tickets
                SET status = 'CLOSING', closing_attempted_at = UTC_TIMESTAMP(6),
+                   closed_by_discord_user_id = COALESCE(closed_by_discord_user_id, %s),
+                   close_reason = COALESCE(close_reason, %s),
                    version = version + 1
                WHERE id = %s AND guild_id = %s
                  AND (status = 'OPEN'
                       OR (status = 'CLOSING' AND
                           closing_attempted_at < UTC_TIMESTAMP(6) - INTERVAL 10 MINUTE))""",
-            (ticket_id, guild_id))
+            (actor_id, clean, ticket_id, guild_id))
         return cursor.rowcount == 1
+
+
+def list_stale_closing_tickets(*, limit: int = 8) -> list[dict]:
+    """Only recover durable closing intents; older rows need Staff intervention."""
+    with pooled_connection() as cursor:
+        cursor.execute(
+            """SELECT id, guild_id, submission_id, discord_channel_id,
+                      applicant_discord_user_id, closed_by_discord_user_id, close_reason
+               FROM portaria_clarification_tickets
+               WHERE status = 'CLOSING' AND discord_channel_id IS NOT NULL
+                 AND closed_by_discord_user_id IS NOT NULL AND close_reason IS NOT NULL
+                 AND closing_attempted_at < UTC_TIMESTAMP(6) - INTERVAL 10 MINUTE
+               ORDER BY closing_attempted_at ASC LIMIT %s""",
+            (min(20, max(1, limit)),))
+        return cursor.fetchall() or []
 
 
 def mark_closed(ticket_id: int, guild_id: int, actor_id: int, reason: str) -> bool:
@@ -238,6 +264,8 @@ def restore_open(ticket_id: int, guild_id: int) -> None:
     with pooled_connection() as cursor:
         cursor.execute(
             """UPDATE portaria_clarification_tickets
-               SET status = 'OPEN', version = version + 1
+               SET status = 'OPEN', closing_attempted_at = NULL,
+                   closed_by_discord_user_id = NULL, close_reason = NULL,
+                   version = version + 1
                WHERE id = %s AND guild_id = %s AND status = 'CLOSING'""",
             (ticket_id, guild_id))

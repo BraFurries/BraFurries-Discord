@@ -555,3 +555,155 @@ def test_portaria_sync_retries_404_without_repeating_same_warning(monkeypatch, c
         bot, failure_cache=problems))
     message.edit.assert_awaited_once()
     assert problems == {}
+
+
+def test_closing_intent_persists_actor_reason_before_discord_edit(monkeypatch):
+    cursor = Cursor()
+    patch_db(monkeypatch, cursor)
+    assert store.claim_close(42, 222, 333, "Conclusão registrada pela Staff")
+    sql, args = cursor.calls[0]
+    assert "closed_by_discord_user_id = COALESCE" in sql
+    assert "close_reason = COALESCE" in sql
+    assert "INTERVAL 10 MINUTE" in sql
+    assert args == (333, "Conclusão registrada pela Staff", 42, 222)
+    store.restore_open(42, 222)
+    assert "closed_by_discord_user_id = NULL" in cursor.calls[-1][0]
+    assert "close_reason = NULL" in cursor.calls[-1][0]
+
+
+def test_closing_recovery_lists_only_stale_durable_intents(monkeypatch):
+    cursor = Cursor()
+    cursor.fetchall = lambda: []
+    patch_db(monkeypatch, cursor)
+    assert store.list_stale_closing_tickets(limit=999) == []
+    sql, args = cursor.calls[0]
+    assert "status = 'CLOSING'" in sql
+    assert "closed_by_discord_user_id IS NOT NULL" in sql
+    assert "close_reason IS NOT NULL" in sql
+    assert "closing_attempted_at < UTC_TIMESTAMP(6) - INTERVAL 10 MINUTE" in sql
+    assert args == (20,)
+
+
+def test_recover_stale_closing_revokes_candidate_and_commits_original_intent(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from core import portaria_clarification as handler
+
+    class Target:
+        def __init__(self, id):
+            self.id = id
+
+    class FakeChannel:
+        def __init__(self, guild):
+            self.id = 999
+            self.guild = guild
+            self.topic = handler._ticket_topic(42, 19)
+            self.overwrites = {
+                Target(0): SimpleNamespace(view_channel=False),
+                Target(777): SimpleNamespace(view_channel=True),
+                Target(333): SimpleNamespace(view_channel=True),
+            }
+            self.edit = AsyncMock()
+        def overwrites_for(self, role):
+            return SimpleNamespace(view_channel=False)
+
+    guild = SimpleNamespace(id=222, default_role=Target(0))
+    channel = FakeChannel(guild)
+    guild.get_channel = lambda _: channel
+    bot = SimpleNamespace(get_guild=lambda _: guild)
+    ticket = {"id": 42, "guild_id": 222, "submission_id": 19,
+              "applicant_discord_user_id": 777, "discord_channel_id": 999,
+              "closed_by_discord_user_id": 333,
+              "close_reason": "Confirmação manual após atendimento"}
+    monkeypatch.setattr(handler.discord, "TextChannel", FakeChannel)
+    monkeypatch.setattr(handler, "list_stale_closing_tickets", lambda **_: [ticket])
+    claim = Mock(return_value=True)
+    closed = Mock(return_value=True)
+    monkeypatch.setattr(handler, "claim_close", claim)
+    monkeypatch.setattr(handler, "mark_closed", closed)
+
+    asyncio.run(handler.reconcile_stale_closing_clarification_tickets(bot))
+
+    claim.assert_called_once_with(
+        42, 222, 333, "Confirmação manual após atendimento")
+    channel.edit.assert_awaited_once()
+    overwrites = channel.edit.await_args.kwargs["overwrites"]
+    assert all(target.id != 777 for target in overwrites)
+    closed.assert_called_once_with(
+        42, 222, 333, "Confirmação manual após atendimento")
+
+
+def test_recover_stale_closing_never_closes_unrelated_or_insecure_channel(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from core import portaria_clarification as handler
+
+    class FakeChannel:
+        def __init__(self, guild):
+            self.id = 999
+            self.guild = guild
+            self.topic = "somebody-elses-ticket"
+            self.overwrites = {}
+            self.edit = AsyncMock()
+        def overwrites_for(self, role):
+            return SimpleNamespace(view_channel=True)
+
+    guild = SimpleNamespace(id=222, default_role=object())
+    channel = FakeChannel(guild)
+    guild.get_channel = lambda _: channel
+    bot = SimpleNamespace(get_guild=lambda _: guild)
+    ticket = {"id": 42, "guild_id": 222, "submission_id": 19,
+              "applicant_discord_user_id": 777, "discord_channel_id": 999,
+              "closed_by_discord_user_id": 333,
+              "close_reason": "Confirmação manual após atendimento"}
+    monkeypatch.setattr(handler.discord, "TextChannel", FakeChannel)
+    monkeypatch.setattr(handler, "list_stale_closing_tickets", lambda **_: [ticket])
+    claim, closed = Mock(), Mock()
+    monkeypatch.setattr(handler, "claim_close", claim)
+    monkeypatch.setattr(handler, "mark_closed", closed)
+    asyncio.run(handler.reconcile_stale_closing_clarification_tickets(bot))
+    claim.assert_not_called()
+    closed.assert_not_called()
+    channel.edit.assert_not_awaited()
+    channel.topic = handler._ticket_topic(42, 19)
+    asyncio.run(handler.reconcile_stale_closing_clarification_tickets(bot))
+    claim.assert_not_called()
+    closed.assert_not_called()
+    channel.edit.assert_not_awaited()
+
+
+def test_recover_stale_closing_defers_database_completion_after_discord_failure(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from core import portaria_clarification as handler
+
+    class FakeChannel:
+        def __init__(self, guild):
+            self.id = 999
+            self.guild = guild
+            self.topic = handler._ticket_topic(42, 19)
+            self.overwrites = {SimpleTarget(777): object()}
+            self.edit = AsyncMock(side_effect=RuntimeError("Discord uncertain"))
+        def overwrites_for(self, role):
+            return SimpleNamespace(view_channel=False)
+
+    class SimpleTarget:
+        def __init__(self, id):
+            self.id = id
+
+    guild = SimpleNamespace(id=222, default_role=object())
+    channel = FakeChannel(guild)
+    guild.get_channel = lambda _: channel
+    bot = SimpleNamespace(get_guild=lambda _: guild)
+    ticket = {"id": 42, "guild_id": 222, "submission_id": 19,
+              "applicant_discord_user_id": 777, "discord_channel_id": 999,
+              "closed_by_discord_user_id": 333,
+              "close_reason": "Confirmação manual após atendimento"}
+    monkeypatch.setattr(handler.discord, "TextChannel", FakeChannel)
+    monkeypatch.setattr(handler, "list_stale_closing_tickets", lambda **_: [ticket])
+    monkeypatch.setattr(handler, "claim_close", Mock(return_value=True))
+    closed = Mock()
+    monkeypatch.setattr(handler, "mark_closed", closed)
+    asyncio.run(handler.reconcile_stale_closing_clarification_tickets(bot))
+    channel.edit.assert_awaited_once()
+    closed.assert_not_called()
