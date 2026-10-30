@@ -297,7 +297,7 @@ async def test_legacy_expiration_preserves_active_manual_grant(monkeypatch):
     record, bot, _sibling = cleanup_context(member=member, role=role, active_sibling=False)
     deleted = Mock()
     manual = Mock(return_value=True)
-    monkeypatch.setattr(routine_functions, "env_flag_enabled", lambda *_a, **_kw: True)
+    monkeypatch.setenv("TEMP_ROLE_MANAGEMENT_ENABLED", "true")
     monkeypatch.setattr(routine_functions, "getExpiringTempRoles", lambda _guild_id: [record])
     monkeypatch.setattr(routine_functions, "getTempRoleExpirationState", lambda _id: {"is_expired": True})
     monkeypatch.setattr(routine_functions, "hasActiveTempRoleSibling", lambda *_a: False)
