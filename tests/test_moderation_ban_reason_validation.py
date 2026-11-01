@@ -7,6 +7,7 @@ from core.moderation_validation import (
     BAN_REASON_DETAILS_MAX_LENGTH,
     DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH,
     audit_reason_encoded_length,
+    ban_reason_validation_message,
     discord_audit_reason,
     normalize_ban_reason_details,
     valid_ban_reason,
@@ -68,6 +69,22 @@ def test_discord_audit_header_is_exact_if_it_fits_and_marked_if_it_does_not():
     for invalid in ("", "  ", "a" * 513):
         with pytest.raises(ValueError):
             discord_audit_reason(invalid)
+
+
+def test_invalid_reason_message_is_friendly_and_reports_the_actual_length():
+    too_long = "a" * 513
+    explanation = ban_reason_validation_message(too_long)
+    assert "513 caracteres" in explanation
+    assert "512" in explanation
+    assert "Resuma" in explanation
+    assert "details" in explanation
+    assert "codificação" not in explanation
+    assert "UTF-8" not in explanation
+
+    missing = ban_reason_validation_message("  ")
+    assert "informar o motivo" in missing
+    assert "512 caracteres" in missing
+    assert "escreveu" not in missing
 
 
 def test_optional_private_reason_details_are_not_truncated():
