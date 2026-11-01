@@ -8,8 +8,9 @@ from discord.ext import commands, tasks
 from datetime import timedelta, datetime, date, timezone
 from dateutil.relativedelta import relativedelta
 from core.time_functions import now
-from core.moderation_validation import (BAN_REASON_MAX_LENGTH, BAN_REASON_DETAILS_MAX_LENGTH,
-                                       valid_ban_reason, normalize_ban_reason_details)
+from core.moderation_validation import (BAN_REASON_DETAILS_MAX_LENGTH,
+                                       valid_ban_reason, ban_reason_validation_message,
+                                       normalize_ban_reason_details)
 from core.database import (
     assignTempRole,
     getProfileData,
@@ -2451,8 +2452,7 @@ class ModerationCog(commands.Cog):
         # ledger. Discord receives its own bounded audit-header representation.
         if not valid_ban_reason(reason):
             return await ctx.response.send_message(
-                content=(f"O motivo deve ser obrigatório e ter até {BAN_REASON_MAX_LENGTH} "
-                         "caracteres. Use 'details' para contexto interno adicional."),
+                content=ban_reason_validation_message(reason),
                 ephemeral=True,
             )
 
