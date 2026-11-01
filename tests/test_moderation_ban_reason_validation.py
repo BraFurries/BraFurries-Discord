@@ -105,6 +105,23 @@ def test_invalid_reason_message_is_friendly_and_reports_the_actual_length():
     assert "escreveu" not in missing
 
 
+def test_slash_command_rejects_unfittable_audit_before_any_ban_side_effect():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "cogs" / "moderation.py"
+    ).read_text(encoding="utf-8")
+    slash = source.split("@app_commands.command(name='ban'", 1)[1]
+    slash = slash.split("@app_commands.command(name=f'notas_add'", 1)[0]
+    assert slash.index("audit_reason = discord_audit_reason(reason)") < slash.index(
+        "ban_id = registerUserBan("
+    )
+    assert slash.index("except AuditReasonTooLong:") < slash.index(
+        "await ctx.response.send_message(content='Processando banimento...'"
+    )
+    assert "ban_audit_reason_validation_message()" in slash
+
+
 def test_optional_private_reason_details_are_not_truncated():
     assert BAN_REASON_DETAILS_MAX_LENGTH == 2048
     assert normalize_ban_reason_details(None) is None
