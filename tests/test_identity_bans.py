@@ -162,15 +162,42 @@ def test_legacy_long_reason_uses_safe_audit_summary_on_new_identity():
     assert legacy_reason not in audit_reason
 
 
-def test_encoded_long_legacy_reason_uses_safe_audit_summary():
+def test_encoded_long_new_reason_is_marked_and_bounded_on_propagated_ban():
+    from core.moderation_validation import audit_reason_encoded_length, valid_ban_reason
+
+    reason = "🦊" * 50
+    assert valid_ban_reason(reason)
     guild = FakeGuild(10, banned={111})
     effects = asyncio.run(
         propagate_new_confirmed_identity_ban(
-            guild, [(1, 111), (2, 222)], reason="🦊" * 50,
+            guild, [(1, 111), (2, 222)], reason=reason,
         )
     )
     assert outcomes(effects)[222] == "APPLIED"
-    assert guild.ban_calls[0][1]["reason"].startswith("Banimento legado;")
+    audit = guild.ban_calls[0][1]["reason"]
+    assert audit.startswith("🦊")
+    assert audit.endswith("... [motivo completo no registro do Coddy]")
+    assert audit_reason_encoded_length(audit) <= 512
+
+
+def test_new_long_reason_preserves_identical_bounded_audit_for_origin_and_linked():
+    from core.moderation_validation import audit_reason_encoded_length, valid_ban_reason
+
+    reason = "Solicitação de conteúdo íntimo explícito. " * 10
+    assert valid_ban_reason(reason)
+    assert audit_reason_encoded_length(reason) > 512
+    guild = FakeGuild(10)
+    effects = asyncio.run(
+        propagate_confirmed_ban(
+            guild, 111, identity_summary((1, [111]), (2, [222])),
+            reason=reason, delete_message_seconds=0,
+        )
+    )
+    assert outcomes(effects) == {111: "APPLIED", 222: "APPLIED"}
+    audits = [params["reason"] for _, params in guild.ban_calls]
+    assert audits[0] == audits[1]
+    assert audit_reason_encoded_length(audits[0]) <= 512
+    assert audits[0].endswith("... [motivo completo no registro do Coddy]")
 
 
 def test_origin_discord_id_must_belong_to_requested_identity():
