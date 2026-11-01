@@ -39,24 +39,25 @@ def test_public_reason_is_validated_separately_from_url_encoded_audit_header():
 def test_exact_report_rejected_by_old_validator_now_preserves_full_public_reason():
     assert len(REPORT_REASON) == 386
     assert len(REPORT_REASON.encode("utf-8")) == 399
-    assert audit_reason_encoded_length(REPORT_REASON) == 569
+    assert len(quote(REPORT_REASON, safe="")) == 569  # old, overly restrictive count
+    assert audit_reason_encoded_length(REPORT_REASON) == 453  # actual discord.py header
     assert valid_ban_reason(REPORT_REASON)
 
     audit = discord_audit_reason(REPORT_REASON)
-    assert audit.startswith("Solicitação de conteúdo íntimo explícito")
-    assert audit.endswith("... [motivo completo no registro do Coddy]")
-    assert len(quote(audit, safe="")) <= 512
+    assert audit == REPORT_REASON  # no unnecessary abbreviation
+    assert len(quote(audit, safe="/ ")) == 453
     assert REPORT_REASON.endswith("para proteger os membros da comunidade.")
 
 
 def test_discord_audit_header_is_exact_if_it_fits_and_marked_if_it_does_not():
     assert DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH == 512
-    assert audit_reason_encoded_length(" ") == 3
+    assert audit_reason_encoded_length(" ") == 1
+    assert audit_reason_encoded_length("/") == 1
     assert audit_reason_encoded_length("á") == len(quote("á", safe="")) == 6
     assert audit_reason_encoded_length("🦊") == 12
     assert discord_audit_reason("x" * 512) == "x" * 512
     assert discord_audit_reason("ação grave") == "ação grave"
-    assert discord_audit_reason("x" * 511 + " ") != "x" * 511 + " "
+    assert discord_audit_reason("x" * 511 + " ") == "x" * 511 + " "
 
     unicode_audit = discord_audit_reason("🦊" * 50)
     assert unicode_audit.startswith("🦊")
