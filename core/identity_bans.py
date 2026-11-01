@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import discord
 
 from core.identity_api import IdentitySummary
-from core.moderation_validation import discord_audit_reason, valid_ban_reason
+from core.moderation_validation import AuditReasonTooLong, discord_audit_reason, valid_ban_reason
 
 
 @dataclass(frozen=True)
@@ -39,14 +39,17 @@ def _error_effect(
 
 
 def _audit_reason_for_propagation(reason: str) -> str:
-    """Format only the Discord audit header; never modify the stored reason.
+    """Reuse the /ban audit formatter, preserving legacy reconciliation.
 
-    New public reasons fit the database and embeds, but their URL-encoded
-    representation may exceed Discord's 512-character header budget. Legacy
-    imported bans with longer reasons retain their existing safe summary.
+    Fresh /ban requests are prevalidated *before* database or Discord effects
+    and cannot reach this fallback. Older ban records may still be propagated
+    when another account becomes confirmed; their full reason remains stored.
     """
     if valid_ban_reason(reason):
-        return discord_audit_reason(reason)
+        try:
+            return discord_audit_reason(reason)
+        except AuditReasonTooLong:
+            return "Banimento existente; motivo completo no historico administrativo."
     return "Banimento legado; motivo completo no historico administrativo."
 
 
@@ -121,7 +124,7 @@ async def propagate_confirmed_ban(
             continue
 
         # Preserve the full reason in the parent ledger and bot log.
-        # Only Discord's audit header may receive a marked abbreviation.
+        # The Discord audit reason is prevalidated for new /ban actions.
         try:
             await guild.ban(
                 target,
