@@ -1,32 +1,37 @@
-"""Side-effect-free validation for one ban's reason, Discord audit header and private details."""
+"""Side-effect-free validation for ban reasons, Discord audit headers and details."""
 
+import re
+import unicodedata
 from urllib.parse import quote
 
-# Ban reason: up to 512 Unicode characters, stored verbatim in MariaDB and
-# included in the moderation log. Discord's URL-encoded audit header has a
-# distinct, 512-character transport limit; it may need a marked abbreviation.
-# discord.py URL-encodes with safe='/ ', so spaces and slashes remain literal.
+# The administrative reason and optional private details are stored verbatim.
+# Discord's audit header has a separate URL-encoded UTF-8 size limit.
 BAN_REASON_MAX_LENGTH = 512
 BAN_REASON_DETAILS_MAX_LENGTH = 2048
 DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH = 512
-_AUDIT_ABBREVIATION_SUFFIX = "... [motivo completo no registro do Coddy]"
+
+# Only visual typography is replaced. Emoji, other scripts, numbers and
+# substantive words must never be dropped to make an audit reason fit.
+_AUDIT_TYPOGRAPHY = str.maketrans({
+    "‘": "'", "’": "'", "“": '"', "”": '"',
+    "–": "-", "—": "-", "‑": "-", "…": "...",
+})
+
+
+class AuditReasonTooLong(ValueError):
+    """The Discord audit header cannot carry the complete reason, even simplified."""
 
 
 def audit_reason_encoded_length(reason: str) -> int:
-    """Count the header value encoded by discord.py (spaces and / remain safe).
+    """Count the header value exactly as encoded by discord.py.
 
-    Keep this identical to discord.http.HTTPClient.request's URL-quoting
-    behavior; otherwise a valid ban can be rejected unnecessarily.
+    Discord.py uses quote(reason, safe="/ "), keeping spaces and / literal.
     """
     return len(quote(reason, safe="/ "))
 
 
 def valid_ban_reason(reason: str | None) -> bool:
-    """Require a nonblank public/admin reason that fits the stored input contract.
-
-    Audit-header encoding is not an input restriction. Call discord_audit_reason
-    at the Discord effect boundary, without changing the persisted reason.
-    """
+    """Validate administrative input independently of Discord header encoding."""
     return bool(reason and reason.strip()) and len(reason) <= BAN_REASON_MAX_LENGTH
 
 
@@ -45,41 +50,58 @@ def ban_reason_validation_message(reason: str | None) -> str:
     )
 
 
-def discord_audit_reason(reason: str) -> str:
-    """Build a safe, explicitly abbreviated Discord audit reason if needed.
+def ban_audit_reason_validation_message() -> str:
+    """Give Staff an actionable explanation without exposing HTTP encodings."""
+    return (
+        "O motivo ainda é grande demais para o registro de auditoria do Discord, "
+        "mesmo após simplificar acentos e formatação. "
+        "Resuma o texto no campo 'reason' e coloque os detalhes adicionais no campo "
+        "'details' (visível apenas à equipe). Nenhum banimento foi aplicado."
+    )
 
-    The original reason remains unchanged in user_bans.reason and in Coddy's
-    moderation log. Only the transport-specific audit string is shortened.
+
+def _simplify_latin_accents(reason: str) -> str:
+    """Remove only diacritics on Latin letters; keep other scripts and emoji."""
+    result: list[str] = []
+    for char in reason:
+        decomposed = unicodedata.normalize("NFD", char)
+        if (
+            len(decomposed) > 1
+            and unicodedata.name(decomposed[0], "").startswith("LATIN ")
+            and all(unicodedata.combining(mark) for mark in decomposed[1:])
+        ):
+            result.append(decomposed[0])
+        else:
+            result.append(char)
+    return "".join(result)
+
+
+def discord_audit_reason(reason: str) -> str:
+    """Keep the full reason if possible, otherwise simplify without truncating.
+
+    Only the Discord audit reason changes; persist and display the original
+    administrative reason. Refuse a new ban if it still cannot fit after
+    canonical Unicode normalization, accent simplification and typography.
     """
     if not valid_ban_reason(reason):
         raise ValueError("invalid public ban reason")
     if audit_reason_encoded_length(reason) <= DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH:
         return reason
 
-    remaining = (
-        DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH
-        - audit_reason_encoded_length(_AUDIT_ABBREVIATION_SUFFIX)
-    )
-    prefix: list[str] = []
-    for char in reason:
-        encoded_length = audit_reason_encoded_length(char)
-        if encoded_length > remaining:
-            break
-        prefix.append(char)
-        remaining -= encoded_length
+    normalized = unicodedata.normalize("NFC", reason)
+    if audit_reason_encoded_length(normalized) <= DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH:
+        return normalized
 
-    shortened = "".join(prefix).rstrip() + _AUDIT_ABBREVIATION_SUFFIX
-    assert audit_reason_encoded_length(shortened) <= DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH
-    return shortened
+    normalized = _simplify_latin_accents(normalized)
+    normalized = re.sub(r"\s+", " ", normalized.translate(_AUDIT_TYPOGRAPHY)).strip()
+    if audit_reason_encoded_length(normalized) <= DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH:
+        return normalized
+
+    raise AuditReasonTooLong("reason exceeds Discord audit header capacity after normalization")
 
 
 def valid_legacy_ban_reason(reason: str | None) -> bool:
-    """Preserve imported Discord bans that predate the short-reason contract.
-
-    Profile synchronization imports existing sanctions; it does not issue a
-    new Discord ban or audit-log message. Its only capacity limit is the
-    persisted VARCHAR(2048), never the new slash-command limit.
-    """
+    """Preserve imported Discord bans even if they exceed the slash-command cap."""
     return bool(reason and reason.strip()) and len(reason) <= 2048
 
 

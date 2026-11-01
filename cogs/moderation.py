@@ -8,9 +8,15 @@ from discord.ext import commands, tasks
 from datetime import timedelta, datetime, date, timezone
 from dateutil.relativedelta import relativedelta
 from core.time_functions import now
-from core.moderation_validation import (BAN_REASON_DETAILS_MAX_LENGTH,
-                                       valid_ban_reason, ban_reason_validation_message,
-                                       normalize_ban_reason_details)
+from core.moderation_validation import (
+    AuditReasonTooLong,
+    BAN_REASON_DETAILS_MAX_LENGTH,
+    ban_audit_reason_validation_message,
+    ban_reason_validation_message,
+    discord_audit_reason,
+    normalize_ban_reason_details,
+    valid_ban_reason,
+)
 from core.database import (
     assignTempRole,
     getProfileData,
@@ -2448,11 +2454,20 @@ class ModerationCog(commands.Cog):
                 ephemeral=True,
             )
 
-        # Preserve the complete administrative reason and details in the
-        # ledger. Discord receives its own bounded audit-header representation.
+        # Preserve the original reason in the administrative ledger and logs.
+        # Validate the *transmitted* Discord audit reason before any DB write or
+        # ban effect; never automatically truncate new moderation decisions.
         if not valid_ban_reason(reason):
             return await ctx.response.send_message(
                 content=ban_reason_validation_message(reason),
+                ephemeral=True,
+            )
+
+        try:
+            audit_reason = discord_audit_reason(reason)
+        except AuditReasonTooLong:
+            return await ctx.response.send_message(
+                content=ban_audit_reason_validation_message(),
                 ephemeral=True,
             )
 
@@ -2610,6 +2625,11 @@ class ModerationCog(commands.Cog):
                 f'Válido até: {valid_until.strftime("%d/%m/%Y %H:%M:%S")}'
             )
         message_lines.append('Recurso permitido.' if can_appeal else 'Recurso não permitido.')
+        if audit_reason != reason:
+            message_lines.append(
+                'Observação: acentos ou formatação foram simplificados apenas '
+                'na auditoria do Discord. O motivo completo foi preservado no Coddy.'
+            )
 
         return await ctx.edit_original_response(content='\n'.join(message_lines))
 
