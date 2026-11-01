@@ -5,6 +5,7 @@ from urllib.parse import quote
 # Ban reason: up to 512 Unicode characters, stored verbatim in MariaDB and
 # included in the moderation log. Discord's URL-encoded audit header has a
 # distinct, 512-character transport limit; it may need a marked abbreviation.
+# discord.py URL-encodes with safe='/ ', so spaces and slashes remain literal.
 BAN_REASON_MAX_LENGTH = 512
 BAN_REASON_DETAILS_MAX_LENGTH = 2048
 DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH = 512
@@ -12,8 +13,12 @@ _AUDIT_ABBREVIATION_SUFFIX = "... [motivo completo no registro do Coddy]"
 
 
 def audit_reason_encoded_length(reason: str) -> int:
-    """Count the URL-encoded UTF-8 characters transmitted to Discord."""
-    return len(quote(reason, safe=""))
+    """Count the header value encoded by discord.py (spaces and / remain safe).
+
+    Keep this identical to discord.http.HTTPClient.request's URL-quoting
+    behavior; otherwise a valid ban can be rejected unnecessarily.
+    """
+    return len(quote(reason, safe="/ "))
 
 
 def valid_ban_reason(reason: str | None) -> bool:
