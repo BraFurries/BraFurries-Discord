@@ -162,11 +162,18 @@ def test_legacy_long_reason_uses_safe_audit_summary_on_new_identity():
     assert legacy_reason not in audit_reason
 
 
-def test_encoded_long_new_reason_is_marked_and_bounded_on_propagated_ban():
-    from core.moderation_validation import audit_reason_encoded_length, valid_ban_reason
+def test_existing_ban_can_propagate_even_when_original_audit_is_unsimplifiable():
+    from core.moderation_validation import AuditReasonTooLong, discord_audit_reason
 
     reason = "🦊" * 50
-    assert valid_ban_reason(reason)
+    try:
+        discord_audit_reason(reason)
+    except AuditReasonTooLong:
+        pass
+    else:
+        raise AssertionError("new /ban must reject this oversized audit reason")
+
+    # This branch is only for a historic ban that is *already recorded*.
     guild = FakeGuild(10, banned={111})
     effects = asyncio.run(
         propagate_new_confirmed_identity_ban(
@@ -174,14 +181,15 @@ def test_encoded_long_new_reason_is_marked_and_bounded_on_propagated_ban():
         )
     )
     assert outcomes(effects)[222] == "APPLIED"
-    audit = guild.ban_calls[0][1]["reason"]
-    assert audit.startswith("🦊")
-    assert audit.endswith("... [motivo completo no registro do Coddy]")
-    assert audit_reason_encoded_length(audit) <= 512
+    assert guild.ban_calls[0][1]["reason"] == (
+        "Banimento existente; motivo completo no historico administrativo."
+    )
 
 
-def test_new_long_reason_preserves_identical_bounded_audit_for_origin_and_linked():
-    from core.moderation_validation import audit_reason_encoded_length, valid_ban_reason
+def test_new_long_reason_uses_full_normalized_audit_for_origin_and_linked():
+    from core.moderation_validation import (
+        audit_reason_encoded_length, discord_audit_reason, valid_ban_reason,
+    )
 
     reason = "Solicitação de conteúdo íntimo explícito. " * 10
     assert valid_ban_reason(reason)
@@ -195,9 +203,10 @@ def test_new_long_reason_preserves_identical_bounded_audit_for_origin_and_linked
     )
     assert outcomes(effects) == {111: "APPLIED", 222: "APPLIED"}
     audits = [params["reason"] for _, params in guild.ban_calls]
-    assert audits[0] == audits[1]
+    assert audits == [discord_audit_reason(reason)] * 2
     assert audit_reason_encoded_length(audits[0]) <= 512
-    assert audits[0].endswith("... [motivo completo no registro do Coddy]")
+    assert "Solicitacao" in audits[0]
+    assert "..." not in audits[0]
 
 
 def test_origin_discord_id_must_belong_to_requested_identity():
