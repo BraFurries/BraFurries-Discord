@@ -3,10 +3,12 @@ from urllib.parse import quote
 import pytest
 
 from core.moderation_validation import (
+    AuditReasonTooLong,
     BAN_REASON_MAX_LENGTH,
     BAN_REASON_DETAILS_MAX_LENGTH,
     DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH,
     audit_reason_encoded_length,
+    ban_audit_reason_validation_message,
     ban_reason_validation_message,
     discord_audit_reason,
     normalize_ban_reason_details,
@@ -50,7 +52,7 @@ def test_exact_report_rejected_by_old_validator_now_preserves_full_public_reason
     assert REPORT_REASON.endswith("para proteger os membros da comunidade.")
 
 
-def test_discord_audit_header_is_exact_if_it_fits_and_marked_if_it_does_not():
+def test_discord_audit_header_is_exact_if_it_fits_and_normalized_when_necessary():
     assert DISCORD_AUDIT_REASON_MAX_ENCODED_LENGTH == 512
     assert audit_reason_encoded_length(" ") == 1
     assert audit_reason_encoded_length("/") == 1
@@ -60,15 +62,31 @@ def test_discord_audit_header_is_exact_if_it_fits_and_marked_if_it_does_not():
     assert discord_audit_reason("ação grave") == "ação grave"
     assert discord_audit_reason("x" * 511 + " ") == "x" * 511 + " "
 
-    unicode_audit = discord_audit_reason("🦊" * 50)
-    assert unicode_audit.startswith("🦊")
-    assert unicode_audit.endswith("... [motivo completo no registro do Coddy]")
-    assert audit_reason_encoded_length(unicode_audit) <= 512
-    assert audit_reason_encoded_length(discord_audit_reason("é" * 100)) <= 512
+    # Do not drop letters or emojis: only remove Latin accents in the audit.
+    assert discord_audit_reason("é" * 100) == "e" * 100
+    assert discord_audit_reason("á" * 512) == "a" * 512
+    assert discord_audit_reason("—" * 100) == "-" * 100
+    assert discord_audit_reason("a" * 300 + "   " * 75) == "a" * 300 + " " * 75
+    assert discord_audit_reason("e\u0301" * 100) == "e" * 100
 
     for invalid in ("", "  ", "a" * 513):
         with pytest.raises(ValueError):
             discord_audit_reason(invalid)
+
+
+def test_unsimplifiable_reason_fails_closed_without_truncating_or_erasing_symbols():
+    for reason in ("🦊" * 50, "你好" * 100, "é" * 80 + "🦊" * 40):
+        assert valid_ban_reason(reason)
+        assert audit_reason_encoded_length(reason) > 512
+        with pytest.raises(AuditReasonTooLong):
+            discord_audit_reason(reason)
+
+    explanation = ban_audit_reason_validation_message()
+    assert "registro de auditoria do Discord" in explanation
+    assert "Resuma o texto" in explanation
+    assert "details" in explanation
+    assert "Nenhum banimento foi aplicado" in explanation
+    assert "UTF-8" not in explanation
 
 
 def test_invalid_reason_message_is_friendly_and_reports_the_actual_length():
