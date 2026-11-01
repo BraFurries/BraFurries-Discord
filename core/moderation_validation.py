@@ -30,6 +30,21 @@ def valid_ban_reason(reason: str | None) -> bool:
     return bool(reason and reason.strip()) and len(reason) <= BAN_REASON_MAX_LENGTH
 
 
+def ban_reason_validation_message(reason: str | None) -> str:
+    """Explain invalid input in plain language, without transport details."""
+    if not reason or not reason.strip():
+        return (
+            "Você precisa informar o motivo do banimento. "
+            "Escreva uma justificativa com até 512 caracteres no campo 'reason'."
+        )
+    return (
+        f"O motivo ficou muito longo: você escreveu {len(reason)} caracteres, "
+        f"mas o limite é de {BAN_REASON_MAX_LENGTH}. "
+        "Resuma o texto no campo 'reason' e, se precisar, coloque informações "
+        "adicionais no campo 'details' (visível apenas à equipe)."
+    )
+
+
 def discord_audit_reason(reason: str) -> str:
     """Build a safe, explicitly abbreviated Discord audit reason if needed.
 
