@@ -2419,7 +2419,7 @@ class ModerationCog(commands.Cog):
     )
     @app_commands.describe(
         member='Membro que será banido',
-        reason='Motivo breve (obrigatório, limite do histórico de auditoria do Discord)',
+        reason='Motivo do banimento (obrigatório, até 512 caracteres)',
         details='Detalhamento interno opcional, exclusivo da Staff (até 2048 caracteres)',
         duration='Duração opcional (ex: 1d, 2s, 3m, 1a)',
         no_appeal='Define se o membro pode recorrer. Padrão: não pode.',
@@ -2447,12 +2447,12 @@ class ModerationCog(commands.Cog):
                 ephemeral=True,
             )
 
-        # Valid only after the Database capacity migration; never truncate
-        # detailed moderation records or apply Discord effects without a ledger.
+        # Preserve the complete administrative reason and details in the
+        # ledger. Discord receives its own bounded audit-header representation.
         if not valid_ban_reason(reason):
             return await ctx.response.send_message(
-                content=(f"O motivo deve caber em {BAN_REASON_MAX_LENGTH} caracteres "
-                         "após a codificação UTF-8 para a auditoria do Discord."),
+                content=(f"O motivo deve ser obrigatório e ter até {BAN_REASON_MAX_LENGTH} "
+                         "caracteres. Use 'details' para contexto interno adicional."),
                 ephemeral=True,
             )
 
