@@ -66,7 +66,7 @@ def test_discord_audit_header_is_exact_if_it_fits_and_normalized_when_necessary(
     assert discord_audit_reason("é" * 100) == "e" * 100
     assert discord_audit_reason("á" * 512) == "a" * 512
     assert discord_audit_reason("—" * 100) == "-" * 100
-    assert discord_audit_reason("a" * 300 + "   " * 75) == "a" * 300 + " " * 75
+    assert discord_audit_reason("é" * 80 + "   " * 60 + "texto") == "e" * 80 + " texto"
     assert discord_audit_reason("e\u0301" * 100) == "e" * 100
 
     for invalid in ("", "  ", "a" * 513):
