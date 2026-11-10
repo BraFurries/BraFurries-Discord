@@ -305,9 +305,8 @@ async def _verify_starter_owner(thread: discord.Thread, partner_id: int) -> None
         )
     except (discord.NotFound, discord.Forbidden) as exc:
         raise PartnerDiscordError("Não foi possível validar a publicação original") from exc
-    if getattr(starter.author, "id", None) != thread.guild.me.id or (
-        starter.embeds and not _matches_embed(starter, partner_id, thread.guild.me.id)
-    ):
+    from core.partner_discord_markdown_sync import _own
+    if not _own(starter, partner_id, thread.guild.me.id):
         raise PartnerDiscordError("Thread vinculada a outra publicação")
 
 
@@ -449,6 +448,7 @@ async def _ensure_exclusive(
     channel_id: int | None, existing_id: int | None,
     adopt_existing: bool, previously_managed: bool, intro_id: int | None,
 ) -> tuple[int | None, int | None, bool]:
+    from core.partner_discord_markdown_sync import _own
     previous = None
     if channel_id is not None:
         candidate = await _get_channel(guild, channel_id)
@@ -516,25 +516,27 @@ async def _ensure_exclusive(
             message = await channel.fetch_message(intro_id)
         except discord.NotFound:
             pass
-        if message is not None and (
-            getattr(message.author, "id", None) != channel.guild.me.id
-            or (message.embeds and not _matches_embed(message, partner_id, channel.guild.me.id))
-        ):
+        from core.partner_discord_markdown_sync import _own
+        if message is not None and not _own(message, partner_id, channel.guild.me.id):
             raise PartnerDiscordError("Mensagem inicial de canal não pertence ao parceiro")
     if message is None:
         async for previous_message in channel.history(limit=100):
             if _matches_embed(previous_message, partner_id, channel.guild.me.id) or (
                 getattr(previous_message.author, "id", None) == channel.guild.me.id
-                and not previous_message.embeds
                 and previous_message.content == presentation
+                and _own(previous_message, partner_id, channel.guild.me.id)
             ):
                 message = previous_message
                 break
     if message is None:
         message = await channel.send(
-            content=presentation, allowed_mentions=discord.AllowedMentions.none()
+            content=presentation, allowed_mentions=discord.AllowedMentions.none(),
+            suppress_embeds=True,
         )
-    elif message.content != presentation or message.embeds:
+    elif message.content != presentation or any(
+        (getattr(getattr(embed, "footer", None), "text", "") or "").startswith("BraFurries partner:")
+        for embed in message.embeds
+    ):
         await message.edit(
             content=presentation, embed=None, allowed_mentions=discord.AllowedMentions.none()
         )
