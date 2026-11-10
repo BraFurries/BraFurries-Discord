@@ -1,5 +1,7 @@
 """Markdown-specific partner announcements: format, safety and reconciliation."""
 import asyncio
+import base64
+import hashlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -7,10 +9,10 @@ import discord
 import pytest
 
 from core.partner_discord_markdown import (
-    decode_part_ids, render_announcement, split_discord_markdown,
+    decode_part_ids, decode_partner_image, render_announcement, split_discord_markdown,
 )
 from core.partner_discord_markdown_sync import (
-    _edit_plain, _find_existing, _own, _recover_continuation, sync_markdown_thread,
+    _edit_plain, _edit_intro, _find_existing, _own, _recover_continuation, sync_markdown_thread,
 )
 from core.partner_discord_runtime import PartnerDiscordError, publish_partner_message
 
@@ -44,6 +46,105 @@ def test_plain_markdown_is_not_rewritten_into_embed_or_tracking_id():
     assert parts == ["# 🐑 **República Indie**\n\nConheça nosso espaço!\n\n## 🌾 Comunidade\n\n- 🎨 Artes"]
     assert "partner:42" not in "".join(parts)
     assert "https://discord.gg/indie" not in "".join(parts)
+
+
+def test_partner_image_is_appended_as_its_own_preview_without_embed_body():
+    url = "https://cdn.example.org/partners/42/image/logo.webp"
+    parts = render_announcement(sample(imageUrl=url))
+    assert parts[-1] == url
+    assert parts[0].startswith("# 🐑")
+    assert "partner:42" not in "".join(parts)
+
+
+def test_binary_image_is_not_exposed_as_a_plain_link():
+    image = b"RIFF" + bytes(4) + b"WEBP" + b"example"
+    data = base64.b64encode(image).decode()
+    digest = hashlib.sha256(image).hexdigest()
+    payload = sample(
+        imageUrl="https://cdn.example.org/partners/42/image/logo.webp",
+        imageData=data, imageContentType="image/webp", imageSha256=digest,
+    )
+    assert decode_partner_image(payload) == (image, digest)
+    text = "\n".join(render_announcement(payload))
+    assert "https://cdn.example.org" not in text
+
+
+@pytest.mark.parametrize("override", [
+    {"imageData": "not base64", "imageSha256": "f" * 64, "imageContentType": "image/webp"},
+    {"imageData": base64.b64encode(b"garbage").decode(), "imageSha256": "f" * 64,
+     "imageContentType": "image/webp"},
+    {"imageData": "AA==", "imageSha256": "f" * 64, "imageContentType": "text/html"},
+])
+def test_binary_image_payload_is_validated_before_discord_effects(override):
+    with pytest.raises(PartnerDiscordError):
+        decode_partner_image(sample(**override))
+
+
+def test_replacement_of_starter_image_preserves_other_attachments_and_markdown():
+    old = SimpleNamespace(filename="brafurries-logo-" + "a"*64 + ".webp")
+    other = SimpleNamespace(filename="keep-this.png")
+    msg = SimpleNamespace(
+        content="# República Indie", embeds=[], attachments=[old, other], edit=AsyncMock()
+    )
+    image = b"RIFF" + bytes(4) + b"WEBP" + b"new logo"
+    digest = hashlib.sha256(image).hexdigest()
+    asyncio.run(_edit_intro(msg, "# República Indie", image, digest))
+    msg.edit.assert_awaited_once()
+    kwargs = msg.edit.await_args.kwargs
+    assert kwargs["content"] == "# República Indie"
+    assert kwargs["attachments"][0] is other
+    assert isinstance(kwargs["attachments"][1], discord.File)
+    assert kwargs["attachments"][1].filename.endswith(digest + ".webp")
+    assert kwargs["allowed_mentions"].everyone is False
+
+
+def test_starter_logo_edit_is_idempotent_and_can_remove_managed_image():
+    digest = "f" * 64
+    old = SimpleNamespace(filename=f"brafurries-logo-{digest}.webp")
+    msg = SimpleNamespace(content="# Indie", embeds=[], attachments=[old], edit=AsyncMock())
+    asyncio.run(_edit_intro(msg, "# Indie", b"fake image", digest))
+    msg.edit.assert_not_awaited()
+    asyncio.run(_edit_intro(msg, "# Indie", None, None))
+    msg.edit.assert_awaited_once()
+    assert msg.edit.await_args.kwargs["attachments"] == []
+
+
+def test_new_forum_thread_uploads_image_in_original_starter_message():
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    thread = Mock(spec=discord.Thread)
+    thread.id = 3000
+    thread.parent_id = 1000
+    thread.guild = guild
+    thread.archived = False
+    thread.locked = True
+    thread.name = "Indie"
+    intro = SimpleNamespace(id=3000, content="# Indie", embeds=[], author=bot, edit=AsyncMock())
+    parent = Mock(spec=discord.ForumChannel)
+    parent.id = 1000
+    parent.guild = guild
+    parent.threads = []
+    async def empty_archives(limit):
+        if False:
+            yield
+    parent.archived_threads = empty_archives
+    parent.create_thread = AsyncMock(return_value=SimpleNamespace(thread=thread, message=intro))
+    blob = b"RIFF" + bytes(4) + b"WEBP" + b"test"
+    digest = hashlib.sha256(blob).hexdigest()
+    ids = asyncio.run(sync_markdown_thread(
+        parent, 42, "Indie", ["# Indie"], None, None, [],
+        image_bytes=blob, image_digest=digest,
+    ))
+    assert ids == (3000, 3000, [])
+    kwargs = parent.create_thread.await_args.kwargs
+    assert isinstance(kwargs["file"], discord.File)
+    assert kwargs["file"].filename.endswith(digest + ".webp")
+    intro.edit.assert_not_awaited()
+
+
+def test_invalid_partner_image_is_rejected():
+    with pytest.raises(PartnerDiscordError):
+        render_announcement(sample(imageUrl="file:///etc/passwd"))
 
 
 def test_legacy_partner_without_custom_markdown_keeps_registered_links():
@@ -227,6 +328,100 @@ def test_new_forum_starter_uses_plain_text_and_returns_continuation_ids():
     thread.send.assert_awaited_once()
     assert thread.send.await_args.kwargs["suppress_embeds"] is True
     intro.edit.assert_not_awaited()
+
+
+def test_existing_partner_image_preview_is_not_edited_on_idempotent_sync():
+    url = "https://cdn.example.org/partners/42/image/logo.webp"
+    message = SimpleNamespace(
+        content=url, embeds=[], flags=SimpleNamespace(suppress_embeds=False), edit=AsyncMock(),
+    )
+    asyncio.run(_edit_plain(message, url, image_preview=True))
+    message.edit.assert_not_awaited()
+    message.flags.suppress_embeds = True
+    asyncio.run(_edit_plain(message, url, image_preview=True))
+    message.edit.assert_awaited_once()
+    assert message.edit.await_args.kwargs["suppress"] is False
+    assert "embed" not in message.edit.await_args.kwargs
+
+
+def test_deleted_thread_is_recreated_only_after_safe_reconciliation(monkeypatch):
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    intro = SimpleNamespace(id=3000, content="# Indie", author=bot, embeds=[], edit=AsyncMock())
+    thread = Mock(spec=discord.Thread)
+    thread.id = 3000
+    thread.parent_id = 1000
+    thread.guild = guild
+    thread.name = "Indie"
+    thread.archived = False
+    thread.locked = True
+    async def no_archived(limit):
+        if False:
+            yield
+    parent = Mock(spec=discord.ForumChannel)
+    parent.guild = guild
+    parent.id = 1000
+    parent.threads = []
+    parent.archived_threads = no_archived
+    parent.create_thread = AsyncMock(return_value=SimpleNamespace(thread=thread, message=intro))
+    from core import partner_discord_markdown_sync as module
+    missing = discord.NotFound(Mock(status=404, reason="Not Found"), "Unknown Channel")
+    monkeypatch.setattr(module, "_get_channel", AsyncMock(side_effect=missing))
+    result = asyncio.run(sync_markdown_thread(parent, 42, "Indie", ["# Indie"], 2000, 2000, [2001]))
+    assert result == (3000, 3000, [])
+    parent.create_thread.assert_awaited_once()
+
+
+def test_deleted_thread_does_not_adopt_an_ambiguous_same_name(monkeypatch):
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    other = SimpleNamespace(id=9000, name="Indie")
+    parent = Mock(spec=discord.ForumChannel)
+    parent.id = 1000
+    parent.guild = guild
+    parent.threads = [other]
+    async def no_archived(limit):
+        if False:
+            yield
+    parent.archived_threads = no_archived
+    other.fetch_message = AsyncMock(return_value=SimpleNamespace(id=9000, author=bot, content="# Indie", embeds=[]))
+    from core import partner_discord_markdown_sync as module
+    missing = discord.NotFound(Mock(status=404, reason="Not Found"), "Unknown Channel")
+    monkeypatch.setattr(module, "_get_channel", AsyncMock(side_effect=missing))
+    with pytest.raises(PartnerDiscordError, match="ambígua"):
+        asyncio.run(sync_markdown_thread(parent, 42, "Indie", ["# Indie"], 2000, 2000, [2001]))
+    parent.create_thread.assert_not_called()
+
+
+def test_image_only_continuation_is_sent_with_preview_and_stored_id():
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    intro = SimpleNamespace(id=3000, content="# Indie", author=bot, embeds=[], edit=AsyncMock())
+    photo = SimpleNamespace(id=3001, content="", author=bot, embeds=[], edit=AsyncMock())
+    thread = Mock(spec=discord.Thread)
+    thread.id = 3000
+    thread.parent_id = 1000
+    thread.guild = guild
+    thread.name = "Indie"
+    thread.archived = False
+    thread.locked = True
+    thread.send = AsyncMock(return_value=photo)
+    async def no_archived(limit):
+        if False:
+            yield
+    thread.history = no_archived
+    parent = Mock(spec=discord.ForumChannel)
+    parent.guild = guild
+    parent.id = 1000
+    parent.threads = []
+    parent.archived_threads = no_archived
+    parent.create_thread = AsyncMock(return_value=SimpleNamespace(thread=thread, message=intro))
+    url = "https://cdn.example.org/partners/42/image/logo.webp"
+    result = asyncio.run(sync_markdown_thread(
+        parent, 42, "Indie", ["# Indie", url], None, None, [], image_url=url
+    ))
+    assert result == (3000, 3000, [3001])
+    assert thread.send.await_args.kwargs["suppress_embeds"] is False
 
 
 def test_representative_post_remains_allowed_after_plain_markdown_migration(monkeypatch):

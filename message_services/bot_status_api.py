@@ -1183,7 +1183,12 @@ class BotStatusApi:
             return
         self._admin_stream_stopping.clear()
 
-        app = web.Application(middlewares=[_build_auth_middleware(self.token)] if self.token else [])
+        # A verified 5 MiB WebP is base64-encoded in the API-authorized sync.
+        # Keep this bounded; aiohttp defaults to 1 MiB for JSON requests.
+        app = web.Application(
+            middlewares=[_build_auth_middleware(self.token)] if self.token else [],
+            client_max_size=8 * 1024 * 1024,
+        )
         app.router.add_get('/', self._handle_status)
         app.router.add_get('/status', self._handle_status)
         app.router.add_get('/health', self._handle_health)

@@ -35,6 +35,57 @@ def sample(**changes):
     return data
 
 
+def test_deleted_bot_owned_category_is_recreated_but_manual_category_is_not(monkeypatch):
+    from core import partner_discord_runtime as runtime
+    missing = discord.NotFound(Mock(status=404, reason="Not Found"), "Unknown Channel")
+    monkeypatch.setattr(runtime, "_get_channel", AsyncMock(side_effect=missing))
+    category = Mock(spec=discord.CategoryChannel)
+    category.id = 3333
+    guild = SimpleNamespace(
+        categories=[], create_category=AsyncMock(return_value=category),
+    )
+    resolved, created = asyncio.run(runtime._category(guild, 1111, True))
+    assert resolved is category
+    assert created is True
+    guild.create_category.assert_awaited_once()
+    with pytest.raises(PartnerDiscordError, match="selecionada foi excluída"):
+        asyncio.run(runtime._category(guild, 1111, False))
+
+
+def test_deleted_bot_owned_forum_is_recreated_without_adopting_existing(monkeypatch):
+    from core import partner_discord_runtime as runtime
+    missing = discord.NotFound(Mock(status=404, reason="Not Found"), "Unknown Channel")
+    monkeypatch.setattr(runtime, "_get_channel", AsyncMock(side_effect=missing))
+    parent = Mock(spec=discord.ForumChannel)
+    parent.id = 4444
+    guild = SimpleNamespace(
+        channels=[], default_role=Mock(), me=Mock(),
+        create_forum=AsyncMock(return_value=parent),
+    )
+    category = Mock(spec=discord.CategoryChannel)
+    category.id = 3333
+    resolved, created = asyncio.run(runtime._thread_parent(guild, category, 2222, True))
+    assert resolved is parent
+    assert created is True
+    guild.create_forum.assert_awaited_once()
+    with pytest.raises(PartnerDiscordError, match="selecionado foi excluído"):
+        asyncio.run(runtime._thread_parent(guild, category, 2222, False))
+
+
+def test_deleted_inactive_thread_is_already_retired_without_new_discord_effects(monkeypatch):
+    from core import partner_discord_runtime as runtime
+    missing = discord.NotFound(Mock(status=404, reason="Not Found"), "Unknown Channel")
+    monkeypatch.setattr(runtime, "_get_channel", AsyncMock(side_effect=missing))
+    guild = SimpleNamespace(id=123, me=SimpleNamespace(id=99))
+    result = asyncio.run(runtime.sync_partner_discord(guild, {
+        "partnerId": "42", "name": "República Indie", "active": False,
+        "threadId": "2000", "announcementMarkdown": "# Indie",
+    }))
+    assert result["threadId"] is None
+    assert result["threadIntroMessageId"] is None
+    assert result["announcementPartMessageIds"] == []
+
+
 def test_embed_contains_partner_description_links_and_owner_marker():
     embed = build_partner_embed(sample())
     assert embed.title == "Parceiro Ônix"
