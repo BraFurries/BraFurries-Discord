@@ -38,7 +38,7 @@ def _sections(text: str) -> list[str]:
                 pieces.append("\n".join(current))
                 current = []
         else:
-            if current and len("\n".join(current)) + 1 + len(line) > _MAX_PART:
+            if current and _discord_units("\n".join(current)) + 1 + _discord_units(line) > _MAX_PART:
                 # Lines are valid boundaries if a paragraph is unusually long.
                 pieces.append("\n".join(current))
                 current = []
@@ -110,7 +110,7 @@ def render_announcement(payload: dict[str, Any]) -> list[str]:
     contact = payload.get("announcementPublicContact")
     if contact is not None and (not isinstance(contact, str) or len(contact) > _MAX_CONTACT):
         raise PartnerDiscordError("Contato público inválido")
-    if contact and contact.strip():
+    if contact and contact.strip() and contact.strip() not in content:
         content += "\n\n📩 **Contato:** " + discord.utils.escape_mentions(contact.strip())
 
     if len(content) > _MAX_SOURCE + 8000:
