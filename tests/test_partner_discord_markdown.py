@@ -46,6 +46,19 @@ def test_plain_markdown_is_not_rewritten_into_embed_or_tracking_id():
     assert "https://discord.gg/indie" not in "".join(parts)
 
 
+def test_partner_image_is_appended_as_its_own_preview_without_embed_body():
+    url = "https://cdn.example.org/partners/42/image/logo.webp"
+    parts = render_announcement(sample(imageUrl=url))
+    assert parts[-1] == url
+    assert parts[0].startswith("# 🐑")
+    assert "partner:42" not in "".join(parts)
+
+
+def test_invalid_partner_image_is_rejected():
+    with pytest.raises(PartnerDiscordError):
+        render_announcement(sample(imageUrl="file:///etc/passwd"))
+
+
 def test_legacy_partner_without_custom_markdown_keeps_registered_links():
     text = "\n\n".join(render_announcement(sample(announcementMarkdown=None)))
     assert text.startswith("# República Indie")
@@ -227,6 +240,85 @@ def test_new_forum_starter_uses_plain_text_and_returns_continuation_ids():
     thread.send.assert_awaited_once()
     assert thread.send.await_args.kwargs["suppress_embeds"] is True
     intro.edit.assert_not_awaited()
+
+
+def test_deleted_thread_is_recreated_only_after_safe_reconciliation(monkeypatch):
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    intro = SimpleNamespace(id=3000, content="# Indie", author=bot, embeds=[], edit=AsyncMock())
+    thread = Mock(spec=discord.Thread)
+    thread.id = 3000
+    thread.parent_id = 1000
+    thread.guild = guild
+    thread.name = "Indie"
+    thread.archived = False
+    thread.locked = True
+    async def no_archived(limit):
+        if False:
+            yield
+    parent = Mock(spec=discord.ForumChannel)
+    parent.guild = guild
+    parent.id = 1000
+    parent.threads = []
+    parent.archived_threads = no_archived
+    parent.create_thread = AsyncMock(return_value=SimpleNamespace(thread=thread, message=intro))
+    from core import partner_discord_markdown_sync as module
+    missing = discord.NotFound(Mock(status=404, reason="Not Found"), "Unknown Channel")
+    monkeypatch.setattr(module, "_get_channel", AsyncMock(side_effect=missing))
+    result = asyncio.run(sync_markdown_thread(parent, 42, "Indie", ["# Indie"], 2000, 2000, [2001]))
+    assert result == (3000, 3000, [])
+    parent.create_thread.assert_awaited_once()
+
+
+def test_deleted_thread_does_not_adopt_an_ambiguous_same_name(monkeypatch):
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    other = SimpleNamespace(id=9000, name="Indie")
+    parent = Mock(spec=discord.ForumChannel)
+    parent.id = 1000
+    parent.guild = guild
+    parent.threads = [other]
+    async def no_archived(limit):
+        if False:
+            yield
+    parent.archived_threads = no_archived
+    other.fetch_message = AsyncMock(return_value=SimpleNamespace(id=9000, author=bot, content="# Indie", embeds=[]))
+    from core import partner_discord_markdown_sync as module
+    missing = discord.NotFound(Mock(status=404, reason="Not Found"), "Unknown Channel")
+    monkeypatch.setattr(module, "_get_channel", AsyncMock(side_effect=missing))
+    with pytest.raises(PartnerDiscordError, match="ambígua"):
+        asyncio.run(sync_markdown_thread(parent, 42, "Indie", ["# Indie"], 2000, 2000, [2001]))
+    parent.create_thread.assert_not_called()
+
+
+def test_image_only_continuation_is_sent_with_preview_and_stored_id():
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    intro = SimpleNamespace(id=3000, content="# Indie", author=bot, embeds=[], edit=AsyncMock())
+    photo = SimpleNamespace(id=3001, content="", author=bot, embeds=[], edit=AsyncMock())
+    thread = Mock(spec=discord.Thread)
+    thread.id = 3000
+    thread.parent_id = 1000
+    thread.guild = guild
+    thread.name = "Indie"
+    thread.archived = False
+    thread.locked = True
+    thread.send = AsyncMock(return_value=photo)
+    async def no_archived(limit):
+        if False:
+            yield
+    parent = Mock(spec=discord.ForumChannel)
+    parent.guild = guild
+    parent.id = 1000
+    parent.threads = []
+    parent.archived_threads = no_archived
+    parent.create_thread = AsyncMock(return_value=SimpleNamespace(thread=thread, message=intro))
+    url = "https://cdn.example.org/partners/42/image/logo.webp"
+    result = asyncio.run(sync_markdown_thread(
+        parent, 42, "Indie", ["# Indie", url], None, None, [], image_url=url
+    ))
+    assert result == (3000, 3000, [3001])
+    assert thread.send.await_args.kwargs["suppress_embeds"] is False
 
 
 def test_representative_post_remains_allowed_after_plain_markdown_migration(monkeypatch):

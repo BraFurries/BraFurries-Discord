@@ -39,14 +39,15 @@ async def _owned_message(thread: discord.Thread, message_id: int, partner_id: in
     return message
 
 
-async def _edit_plain(message: discord.Message, text: str) -> None:
+async def _edit_plain(message: discord.Message, text: str, *, image_preview: bool = False) -> None:
     legacy = any(
         (getattr(getattr(embed, "footer", None), "text", "") or "").startswith("BraFurries partner:")
         for embed in message.embeds
     )
-    if message.content != text or legacy:
+    if message.content != text or legacy or image_preview:
         await message.edit(
-            content=text, embed=None, allowed_mentions=discord.AllowedMentions.none()
+            content=text, embed=None, suppress=not image_preview,
+            allowed_mentions=discord.AllowedMentions.none()
         )
 
 
@@ -119,22 +120,34 @@ async def sync_markdown_thread(
     thread_id: int | None,
     intro_id: int | None,
     known_continuations: list[int],
+    image_url: str | None = None,
 ) -> tuple[int, int, list[int]]:
     if not parts:
         raise PartnerDiscordError("O anúncio não pode ficar vazio")
     thread = None
     if thread_id is not None:
-        channel = await _get_channel(parent.guild, thread_id)
-        if not isinstance(channel, discord.Thread) or channel.parent_id != parent.id:
+        try:
+            channel = await _get_channel(parent.guild, thread_id)
+        except discord.NotFound:
+            # The persisted Discord thread was genuinely deleted. Recover
+            # only after the bounded ownership/ambiguity scan below; never
+            # adopt another bot's or partner's thread based on its title.
+            channel = None
+            intro_id = None
+            known_continuations = []
+        if channel is not None and (
+            not isinstance(channel, discord.Thread) or channel.parent_id != parent.id
+        ):
             raise PartnerDiscordError("A thread registrada pertence a outro canal")
-        root = await (
-            channel.fetch_message(channel.id)
-            if isinstance(parent, discord.ForumChannel)
-            else parent.fetch_message(channel.id)
-        )
-        if not _own(root, partner_id, parent.guild.me.id):
-            raise PartnerDiscordError("A thread registrada pertence a outra publicação")
-        thread = channel
+        if channel is not None:
+            root = await (
+                channel.fetch_message(channel.id)
+                if isinstance(parent, discord.ForumChannel)
+                else parent.fetch_message(channel.id)
+            )
+            if not _own(root, partner_id, parent.guild.me.id):
+                raise PartnerDiscordError("A thread registrada pertence a outra publicação")
+            thread = channel
     else:
         thread = await _find_existing(parent, partner_id, name, parts[0])
 
@@ -209,10 +222,10 @@ async def sync_markdown_thread(
         if message is None:
             message = await thread.send(
                 content, allowed_mentions=discord.AllowedMentions.none(),
-                suppress_embeds=True
+                suppress_embeds=not (image_url is not None and content == image_url)
             )
         else:
-            await _edit_plain(message, content)
+            await _edit_plain(message, content, image_preview=image_url is not None and content == image_url)
         excluded.add(message.id)
         applied.append(message.id)
 

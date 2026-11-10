@@ -589,6 +589,7 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
             thread_id, intro_id, announcement_ids = await sync_markdown_thread(
                 parent, partner_id, request["name"].strip(), parts,
                 thread_id, intro_id, announcement_ids,
+                image_url=request.get("imageUrl"),
             )
         else:
             created_category = created_parent = False

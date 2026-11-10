@@ -118,7 +118,18 @@ def render_announcement(payload: dict[str, Any]) -> list[str]:
 
     if len(content) > _MAX_SOURCE + 8000:
         raise PartnerDiscordError("Anúncio final excede os limites do Discord")
-    return split_discord_markdown(content)
+    parts = split_discord_markdown(content)
+    # The image is a dedicated continuation with a native Discord image
+    # preview. The announcement itself remains plain Markdown (no embed).
+    image_url = payload.get("imageUrl")
+    if image_url is not None:
+        if not isinstance(image_url, str):
+            raise PartnerDiscordError("Imagem do parceiro inválida")
+        if image_url.strip():
+            parts.append(_validated_url(image_url.strip()))
+    if len(parts) > 12:
+        raise PartnerDiscordError("Anúncio excede o número de mensagens permitido")
+    return parts
 
 
 def decode_part_ids(raw: Any) -> list[int]:
