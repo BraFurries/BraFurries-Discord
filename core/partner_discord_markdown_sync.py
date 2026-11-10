@@ -44,7 +44,8 @@ async def _edit_plain(message: discord.Message, text: str, *, image_preview: boo
         (getattr(getattr(embed, "footer", None), "text", "") or "").startswith("BraFurries partner:")
         for embed in message.embeds
     )
-    if message.content != text or legacy or image_preview:
+    was_suppressed = bool(getattr(getattr(message, "flags", None), "suppress_embeds", False))
+    if message.content != text or legacy or (image_preview and was_suppressed):
         kwargs = {
             "content": text,
             "suppress": not image_preview,
