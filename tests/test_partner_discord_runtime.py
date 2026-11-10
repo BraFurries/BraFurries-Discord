@@ -188,13 +188,13 @@ def test_revocation_of_departed_member_removes_stale_member_overwrite():
 
 def _permission_fixture(*, manageable=True):
     # Keep the overwrites mutable to simulate Discord's cache update events.
-    everyone = SimpleNamespace(id=1, permissions=discord.Permissions.none())
-    bot = SimpleNamespace(id=2, guild_permissions=discord.Permissions.none())
-    bot_role = SimpleNamespace(id=3, permissions=discord.Permissions.none())
-    writer_role = SimpleNamespace(id=4, permissions=discord.Permissions.none())
-    writer_member = SimpleNamespace(id=5, guild_permissions=discord.Permissions.none())
-    admin_role = SimpleNamespace(id=6, permissions=discord.Permissions(administrator=True))
-    representative = SimpleNamespace(id=7, guild_permissions=discord.Permissions.none())
+    everyone = Mock(id=1, permissions=discord.Permissions.none())
+    bot = Mock(id=2, guild_permissions=discord.Permissions.none())
+    bot_role = Mock(id=3, permissions=discord.Permissions.none())
+    writer_role = Mock(id=4, permissions=discord.Permissions.none())
+    writer_member = Mock(id=5, guild_permissions=discord.Permissions.none())
+    admin_role = Mock(id=6, permissions=discord.Permissions(administrator=True))
+    representative = Mock(id=7, guild_permissions=discord.Permissions.none())
     guild = SimpleNamespace(
         id=900,
         default_role=everyone,
