@@ -31,6 +31,14 @@ def sample(**changes):
     return raw
 
 
+def test_emoji_count_uses_discord_utf16_units_not_python_character_count():
+    with pytest.raises(PartnerDiscordError, match="Linha Markdown longa demais"):
+        split_discord_markdown("🐑" * 1000)
+    result = split_discord_markdown("🐑" * 800 + "\\n\\n" + "🐑" * 800)
+    assert len(result) == 2
+    assert all(len(item.encode("utf-16-le")) // 2 <= 1900 for item in result)
+
+
 def test_plain_markdown_is_not_rewritten_into_embed_or_tracking_id():
     parts = render_announcement(sample())
     assert parts == ["# 🐑 **República Indie**\n\nConheça nosso espaço!\n\n## 🌾 Comunidade\n\n- 🎨 Artes"]
