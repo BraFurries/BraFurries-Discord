@@ -392,7 +392,7 @@ async def _ensure_exclusive(
             message = await channel.fetch_message(intro_id)
         except discord.NotFound:
             pass
-        if message is not None and not _matches_embed(message, partner_id, thread.guild.me.id):
+        if message is not None and not _matches_embed(message, partner_id, channel.guild.me.id):
             raise PartnerDiscordError("Mensagem inicial de canal não pertence ao parceiro")
     if message is None:
         async for previous_message in channel.history(limit=100):
@@ -486,10 +486,18 @@ async def publish_partner_message(guild: discord.Guild, request: dict[str, Any])
     if not isinstance(thread, discord.Thread) or not thread.locked:
         raise PartnerDiscordError("A vitrine do parceiro não está protegida")
     valid = False
-    async for message in thread.history(limit=100):
-        if _matches_embed(message, partner_id, thread.guild.me.id):
-            valid = True
-            break
+    intro_id = _id(request.get("threadIntroMessageId"), "threadIntroMessageId", optional=True)
+    if intro_id is not None:
+        try:
+            starter = await thread.fetch_message(intro_id)
+            valid = _matches_embed(starter, partner_id, thread.guild.me.id)
+        except discord.NotFound:
+            pass
+    if not valid:
+        async for message in thread.history(limit=100):
+            if _matches_embed(message, partner_id, thread.guild.me.id):
+                valid = True
+                break
     if not valid:
         raise PartnerDiscordError("Thread não está registrada para este parceiro")
     if thread.archived:
