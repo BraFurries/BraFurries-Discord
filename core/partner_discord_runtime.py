@@ -448,7 +448,10 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
     active = request.get("active") is True
     if exclusive_enabled and active and representative_id is None:
         raise PartnerDiscordError("Representante sem conta Discord vinculada")
-    key = (guild.id, partner_id)
+    # Category/forum creation is shared across all partners in one guild.
+    # Serializing only by partner_id would permit two simultaneous requests
+    # to create duplicate shared directory resources.
+    key = (guild.id, 0)
     lock = _locks.get(key)
     if lock is None:
         lock = asyncio.Lock()
