@@ -307,6 +307,7 @@ def test_image_only_continuation_is_sent_with_preview_and_stored_id():
     async def no_archived(limit):
         if False:
             yield
+    thread.history = no_archived
     parent = Mock(spec=discord.ForumChannel)
     parent.guild = guild
     parent.id = 1000
