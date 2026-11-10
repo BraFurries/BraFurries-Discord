@@ -305,7 +305,8 @@ async def _verify_starter_owner(thread: discord.Thread, partner_id: int) -> None
         )
     except (discord.NotFound, discord.Forbidden) as exc:
         raise PartnerDiscordError("Não foi possível validar a publicação original") from exc
-    if not _matches_embed(starter, partner_id, thread.guild.me.id):
+    from core.partner_discord_markdown_sync import _own
+    if not _own(starter, partner_id, thread.guild.me.id):
         raise PartnerDiscordError("Thread vinculada a outra publicação")
 
 
@@ -442,11 +443,12 @@ async def _revoke_member(channel: discord.TextChannel, discord_user_id: int | No
 
 async def _ensure_exclusive(
     guild: discord.Guild, category: discord.CategoryChannel, partner_id: int,
-    name: str, embed: discord.Embed, representative_id: int | None,
+    name: str, presentation: str, representative_id: int | None,
     previous_representative_id: int | None, enabled: bool,
     channel_id: int | None, existing_id: int | None,
     adopt_existing: bool, previously_managed: bool, intro_id: int | None,
 ) -> tuple[int | None, int | None, bool]:
+    from core.partner_discord_markdown_sync import _own
     previous = None
     if channel_id is not None:
         candidate = await _get_channel(guild, channel_id)
@@ -514,17 +516,30 @@ async def _ensure_exclusive(
             message = await channel.fetch_message(intro_id)
         except discord.NotFound:
             pass
-        if message is not None and not _matches_embed(message, partner_id, channel.guild.me.id):
+        from core.partner_discord_markdown_sync import _own
+        if message is not None and not _own(message, partner_id, channel.guild.me.id):
             raise PartnerDiscordError("Mensagem inicial de canal não pertence ao parceiro")
     if message is None:
         async for previous_message in channel.history(limit=100):
-            if _matches_embed(previous_message, partner_id, channel.guild.me.id):
+            if _matches_embed(previous_message, partner_id, channel.guild.me.id) or (
+                getattr(previous_message.author, "id", None) == channel.guild.me.id
+                and previous_message.content == presentation
+                and _own(previous_message, partner_id, channel.guild.me.id)
+            ):
                 message = previous_message
                 break
     if message is None:
-        message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
-    else:
-        await message.edit(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        message = await channel.send(
+            content=presentation, allowed_mentions=discord.AllowedMentions.none(),
+            suppress_embeds=True,
+        )
+    elif message.content != presentation or any(
+        (getattr(getattr(embed, "footer", None), "text", "") or "").startswith("BraFurries partner:")
+        for embed in message.embeds
+    ):
+        await message.edit(
+            content=presentation, embed=None, allowed_mentions=discord.AllowedMentions.none()
+        )
     if previous_representative_id != representative_id:
         await _revoke_member(channel, previous_representative_id)
     if previous is not None and previous.id != channel.id:
@@ -541,7 +556,11 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
     if not isinstance(request, dict):
         raise PartnerDiscordError("Requisição inválida")
     partner_id = _id(request.get("partnerId"), "partnerId")
-    embed = build_partner_embed(request)
+    # Load only after the request has passed the internal status token checks.
+    from core.partner_discord_markdown import decode_part_ids, render_announcement
+    from core.partner_discord_markdown_sync import sync_markdown_thread
+    parts = render_announcement(request)
+    announcement_ids = decode_part_ids(request.get("announcementPartMessageIds", []))
     category_id = _id(request.get("categoryId"), "categoryId", optional=True)
     parent_id = _id(request.get("threadParentChannelId"), "threadParentChannelId", optional=True)
     thread_id = _id(request.get("threadId"), "threadId", optional=True)
@@ -567,8 +586,9 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
         if active:
             category, created_category = await _category(guild, category_id)
             parent, created_parent = await _thread_parent(guild, category, parent_id)
-            thread_id, intro_id = await _ensure_thread(
-                parent, partner_id, request["name"].strip(), embed, thread_id, intro_id
+            thread_id, intro_id, announcement_ids = await sync_markdown_thread(
+                parent, partner_id, request["name"].strip(), parts,
+                thread_id, intro_id, announcement_ids,
             )
         else:
             created_category = created_parent = False
@@ -581,7 +601,7 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
         if active or channel_id is not None:
             text_id, text_intro, text_managed = await _ensure_exclusive(
                 guild, category if active else None, partner_id, request["name"].strip(),
-                embed, representative_id, previous_representative_id,
+                parts[0], representative_id, previous_representative_id,
                 exclusive_enabled and active, channel_id, existing_id,
                 request.get("adoptExistingTextChannel") is True,
                 request.get("textChannelCreatedByBot") is True, channel_intro,
@@ -595,6 +615,7 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
             "threadParentCreatedByBot": bool(created_parent or request.get("threadParentCreatedByBot")),
             "threadId": str(thread_id) if thread_id else None,
             "threadIntroMessageId": str(intro_id) if intro_id else None,
+            "announcementPartMessageIds": [str(item) for item in announcement_ids],
             "textChannelId": str(text_id) if text_id else None,
             "textIntroMessageId": str(text_intro) if text_intro else None,
             "textChannelCreatedByBot": text_managed,
@@ -611,21 +632,17 @@ async def publish_partner_message(guild: discord.Guild, request: dict[str, Any])
     thread = await _get_channel(guild, thread_id)
     if not isinstance(thread, discord.Thread) or not thread.locked:
         raise PartnerDiscordError("A vitrine do parceiro não está protegida")
-    valid = False
     intro_id = _id(request.get("threadIntroMessageId"), "threadIntroMessageId", optional=True)
-    if intro_id is not None:
-        try:
-            starter = await thread.fetch_message(intro_id)
-            valid = _matches_embed(starter, partner_id, thread.guild.me.id)
-        except discord.NotFound:
-            pass
-    if not valid:
-        async for message in thread.history(limit=100):
-            if _matches_embed(message, partner_id, thread.guild.me.id):
-                valid = True
-                break
-    if not valid:
-        raise PartnerDiscordError("Thread não está registrada para este parceiro")
+    if intro_id is None:
+        raise PartnerDiscordError("Publicação sem mensagem inicial registrada na API")
+    # API verifies active partner ownership and supplies the stored thread and
+    # intro IDs. Require authorship by Coddy; legacy embeds still need their
+    # original partner marker, while migrated Markdown messages have no ID.
+    from core.partner_discord_markdown_sync import _owned_message
+    try:
+        await _owned_message(thread, intro_id, partner_id)
+    except discord.NotFound as exc:
+        raise PartnerDiscordError("Mensagem inicial da publicação não encontrada") from exc
     if thread.archived:
         await thread.edit(archived=False, reason="Nova publicação do parceiro")
     message = await thread.send(content.strip(), allowed_mentions=discord.AllowedMentions.none())
