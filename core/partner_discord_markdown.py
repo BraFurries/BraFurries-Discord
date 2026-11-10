@@ -82,7 +82,8 @@ def render_announcement(payload: dict[str, Any]) -> list[str]:
         raise PartnerDiscordError("Anúncio Markdown acima de 16.000 caracteres")
 
     # Default for older publications: plain Markdown, never another embed.
-    content = markdown.strip() if markdown and markdown.strip() else (
+    custom_announcement = bool(markdown and markdown.strip())
+    content = markdown.strip() if custom_announcement else (
         f"# {discord.utils.escape_markdown(name.strip())}\n\n{description.strip() or 'Parceria BraFurries'}"
     )
     mode = payload.get("announcementLinksMode") or "INLINE_ONLY"
@@ -91,7 +92,9 @@ def render_announcement(payload: dict[str, Any]) -> list[str]:
     links = payload.get("links") or []
     if not isinstance(links, list) or len(links) > 50:
         raise PartnerDiscordError("Links da parceria inválidos")
-    if mode == "APPEND_MISSING":
+    # Preserve website/invite links for pre-existing partners without a custom
+    # announcement, while custom Markdown defaults to no automatic link block.
+    if mode == "APPEND_MISSING" or not custom_announcement:
         missing: list[str] = []
         for item in links:
             if not isinstance(item, dict):
