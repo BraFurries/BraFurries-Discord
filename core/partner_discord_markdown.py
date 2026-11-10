@@ -5,7 +5,6 @@ the announcement or add invisible tracking characters to user text.
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import discord
@@ -16,7 +15,6 @@ _MAX_SOURCE = 16000
 _MAX_PART = 1900
 _MAX_PARTS = 12
 _MAX_CONTACT = 255
-_LINK = re.compile(r"\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)")
 
 
 def _sections(text: str) -> list[str]:
