@@ -95,7 +95,7 @@ def build_partner_embed(payload: dict[str, Any]) -> discord.Embed:
 
 
 def _matches_embed(message: discord.Message, partner_id: int) -> bool:
-    return bool(message.author.bot and any(
+    return bool(getattr(message.author, "bot", False) and any(
         getattr(getattr(embed, "footer", None), "text", None) == _marker(partner_id)
         for embed in message.embeds
     ))
@@ -231,7 +231,7 @@ async def _ensure_thread(parent: discord.ForumChannel | discord.TextChannel,
 
 def _require_channel_marker(channel: discord.TextChannel, partner_id: int) -> bool:
     topic = getattr(channel, "topic", None) or ""
-    match = re.search(r"BraFurries partner:(\\d+)", topic)
+    match = re.search(r"BraFurries partner:(\d+)", topic)
     if match and int(match.group(1)) != partner_id:
         raise PartnerDiscordError("Canal já vinculado a outro parceiro")
     return bool(match)
