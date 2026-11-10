@@ -199,6 +199,21 @@ async def _find_thread(parent: discord.ForumChannel | discord.TextChannel, partn
     return None
 
 
+async def _verify_starter_owner(thread: discord.Thread, partner_id: int) -> None:
+    """Validate ownership against the original forum/text parent starter."""
+    parent = await _get_channel(thread.guild, thread.parent_id)
+    try:
+        starter = await (
+            thread.fetch_message(thread.id)
+            if isinstance(parent, discord.ForumChannel)
+            else parent.fetch_message(thread.id)
+        )
+    except (discord.NotFound, discord.Forbidden) as exc:
+        raise PartnerDiscordError("Não foi possível validar a publicação original") from exc
+    if not _matches_embed(starter, partner_id, thread.guild.me.id):
+        raise PartnerDiscordError("Thread vinculada a outra publicação")
+
+
 async def _intro(thread: discord.Thread, known_id: int | None, partner_id: int,
                  embed: discord.Embed) -> int:
     message = None
@@ -469,6 +484,7 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
                 channel = await _get_channel(guild, thread_id)
                 if not isinstance(channel, discord.Thread):
                     raise PartnerDiscordError("Thread inválida")
+                await _verify_starter_owner(channel, partner_id)
                 await channel.edit(locked=True, archived=True, reason="Parceria inativa")
         if active or channel_id is not None:
             text_id, text_intro, text_managed = await _ensure_exclusive(
