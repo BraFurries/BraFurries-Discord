@@ -148,7 +148,9 @@ async def sync_markdown_thread(
             if not _own(root, partner_id, parent.guild.me.id):
                 raise PartnerDiscordError("A thread registrada pertence a outra publicação")
             thread = channel
-    else:
+    if thread is None:
+        # This scan is mandatory even if the stored thread was deleted:
+        # a mutable same-name thread cannot prove ownership.
         thread = await _find_existing(parent, partner_id, name, parts[0])
 
     new_intro = None
