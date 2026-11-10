@@ -242,6 +242,20 @@ def test_new_forum_starter_uses_plain_text_and_returns_continuation_ids():
     intro.edit.assert_not_awaited()
 
 
+def test_existing_partner_image_preview_is_not_edited_on_idempotent_sync():
+    url = "https://cdn.example.org/partners/42/image/logo.webp"
+    message = SimpleNamespace(
+        content=url, embeds=[], flags=SimpleNamespace(suppress_embeds=False), edit=AsyncMock(),
+    )
+    asyncio.run(_edit_plain(message, url, image_preview=True))
+    message.edit.assert_not_awaited()
+    message.flags.suppress_embeds = True
+    asyncio.run(_edit_plain(message, url, image_preview=True))
+    message.edit.assert_awaited_once()
+    assert message.edit.await_args.kwargs["suppress"] is False
+    assert "embed" not in message.edit.await_args.kwargs
+
+
 def test_deleted_thread_is_recreated_only_after_safe_reconciliation(monkeypatch):
     bot = SimpleNamespace(id=99)
     guild = SimpleNamespace(id=123, me=bot)
