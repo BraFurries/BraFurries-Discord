@@ -135,14 +135,14 @@ async def _category(guild: discord.Guild, requested_id: int | None) -> tuple[dis
 
 
 def _is_administrator(subject: Any) -> bool:
-    # An Administrator always bypasses channel denies in Discord. Preserve
-    # these administrative permissions; do not claim they can be revoked.
-    permissions = getattr(subject, "permissions", None)
-    guild_permissions = getattr(subject, "guild_permissions", None)
-    return bool(
-        getattr(permissions, "administrator", False)
-        or getattr(guild_permissions, "administrator", False)
-    )
+    # Discord's Administrator bypasses channel denies. Explicitly inspect the
+    # concrete target type: unknown/departed members are discord.Object and
+    # must not be treated as administrators.
+    if isinstance(subject, discord.Role):
+        return subject.permissions.administrator
+    if isinstance(subject, discord.Member):
+        return subject.guild_permissions.administrator
+    return False
 
 
 def _require_manage_overwrites(channel: discord.abc.GuildChannel) -> None:
@@ -168,7 +168,24 @@ async def _repair_overwrite(
     for key, value in drift.items():
         setattr(overwrite, key, value)
     # Preserve all existing read, moderation and unrelated permissions.
-    await channel.set_permissions(target, overwrite=overwrite, reason=reason)
+    # discord.py may return a type-aware Object for an uncached role or a
+    # former member. GuildChannel.set_permissions rejects that object, so
+    # apply its typed overwrite directly instead of aborting all partners.
+    if isinstance(target, discord.Object):
+        kind = getattr(target, "type", None)
+        if kind is discord.Role:
+            overwrite_type = 0
+        elif kind in (discord.User, discord.Member):
+            overwrite_type = 1
+        else:
+            raise PartnerDiscordError("Sobrescrita Discord sem tipo verificável")
+        allow, deny = overwrite.pair()
+        await channel._state.http.edit_channel_permissions(
+            channel.id, target.id, str(allow.value), str(deny.value),
+            overwrite_type, reason=reason,
+        )
+    else:
+        await channel.set_permissions(target, overwrite=overwrite, reason=reason)
     _logger.info(
         "Partner Discord permissions reconciled guild=%s channel=%s target=%s fields=%s",
         channel.guild.id, channel.id, target.id, ",".join(sorted(drift)),
