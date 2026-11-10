@@ -12,7 +12,7 @@ from core.partner_discord_markdown import (
 from core.partner_discord_markdown_sync import (
     _edit_plain, _own, _recover_continuation, sync_markdown_thread,
 )
-from core.partner_discord_runtime import PartnerDiscordError
+from core.partner_discord_runtime import PartnerDiscordError, publish_partner_message
 
 
 def sample(**changes):
@@ -168,3 +168,71 @@ def test_foreign_legacy_owner_marker_is_never_adopted_as_plain_markdown():
         author=SimpleNamespace(id=99), content="Texto", embeds=[legacy]
     )
     assert not _own(message, 42, 99)
+
+def test_new_forum_starter_uses_plain_text_and_returns_continuation_ids():
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    intro = SimpleNamespace(
+        id=2000, content="# Indie", author=bot, embeds=[], edit=AsyncMock(),
+    )
+    continuation = SimpleNamespace(
+        id=2001, content="## Artes", author=bot, embeds=[], edit=AsyncMock(),
+    )
+    thread = Mock(spec=discord.Thread)
+    thread.id = 2000
+    thread.parent_id = 1000
+    thread.guild = guild
+    thread.name = "Indie"
+    thread.archived = False
+    thread.locked = True
+    thread.send = AsyncMock(return_value=continuation)
+    async def empty_history(limit):
+        if False:
+            yield
+    thread.history = empty_history
+    parent = Mock(spec=discord.ForumChannel)
+    parent.id = 1000
+    parent.guild = guild
+    parent.threads = []
+    async def empty_archives(limit):
+        if False:
+            yield
+    parent.archived_threads = empty_archives
+    parent.create_thread = AsyncMock(
+        return_value=SimpleNamespace(thread=thread, message=intro)
+    )
+
+    ids = asyncio.run(sync_markdown_thread(
+        parent, 42, "Indie", ["# Indie", "## Artes"], None, None, []
+    ))
+    assert ids == (2000, 2000, [2001])
+    assert parent.create_thread.await_args.kwargs["content"] == "# Indie"
+    assert parent.create_thread.await_args.kwargs["suppress_embeds"] is True
+    assert "embed" not in parent.create_thread.await_args.kwargs
+    thread.send.assert_awaited_once()
+    assert thread.send.await_args.kwargs["suppress_embeds"] is True
+    intro.edit.assert_not_awaited()
+
+
+def test_representative_post_remains_allowed_after_plain_markdown_migration(monkeypatch):
+    bot = SimpleNamespace(id=99)
+    intro = SimpleNamespace(id=2000, author=bot, content="# Indie", embeds=[])
+    posted = SimpleNamespace(id=2002)
+    thread = Mock(spec=discord.Thread)
+    thread.id = 2000
+    thread.locked = True
+    thread.archived = False
+    thread.guild = SimpleNamespace(me=bot)
+    thread.fetch_message = AsyncMock(return_value=intro)
+    thread.send = AsyncMock(return_value=posted)
+    monkeypatch.setattr(
+        "core.partner_discord_runtime._get_channel", AsyncMock(return_value=thread)
+    )
+    result = asyncio.run(publish_partner_message(
+        SimpleNamespace(id=123), {
+            "partnerId": 42, "threadId": 2000,
+            "threadIntroMessageId": 2000, "content": "Novidades da semana!",
+        }
+    ))
+    assert result["messageId"] == "2002"
+    thread.send.assert_awaited_once()
