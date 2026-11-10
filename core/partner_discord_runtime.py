@@ -133,6 +133,16 @@ async def _thread_parent(
             raise PartnerDiscordError("O canal de threads precisa ser Fórum ou Texto")
         if getattr(channel, "category_id", None) != category.id:
             raise PartnerDiscordError("O canal de threads não pertence à categoria configurada")
+        # Public threads inherit parent permissions and cannot restrict
+        # individual representatives.
+        everyone = channel.permissions_for(guild.default_role)
+        if everyone.send_messages or everyone.send_messages_in_threads:
+            raise PartnerDiscordError("Configure o canal de threads como somente leitura")
+        for subject, overwrite in channel.overwrites.items():
+            if getattr(subject, "id", None) == getattr(guild.me, "id", None):
+                continue
+            if overwrite.send_messages is True or overwrite.send_messages_in_threads is True:
+                raise PartnerDiscordError("Remova outras permissões de escrita antes de adotar o canal")
         return channel, False
     if any(x.name == "parceiros" and x.category_id == category.id for x in guild.channels):
         raise PartnerDiscordError("Já existe um canal parceiros nessa categoria; selecione seu ID")
@@ -204,6 +214,14 @@ async def _ensure_thread(parent: discord.ForumChannel | discord.TextChannel,
         channel = await _get_channel(parent.guild, thread_id)
         if not isinstance(channel, discord.Thread) or channel.parent_id != parent.id:
             raise PartnerDiscordError("A thread registrada pertence a outro canal")
+        try:
+            starter = await (channel.fetch_message(channel.id)
+                             if isinstance(parent, discord.ForumChannel)
+                             else parent.fetch_message(channel.id))
+        except (discord.NotFound, discord.Forbidden):
+            raise PartnerDiscordError("Não foi possível validar a thread já publicada")
+        if not _matches_embed(starter, partner_id):
+            raise PartnerDiscordError("A thread informada pertence a outra publicação")
         thread = channel
     if thread is None:
         thread = await _find_thread(parent, partner_id, name)
