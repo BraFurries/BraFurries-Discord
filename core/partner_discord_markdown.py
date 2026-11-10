@@ -17,12 +17,19 @@ _MAX_PARTS = 12
 _MAX_CONTACT = 255
 
 
+def _discord_units(text: str) -> int:
+    # Discord message length is safest measured in UTF-16 code units.
+    # Python's len() counts astral emojis once, whereas Discord clients may
+    # count the surrogate pair as two characters.
+    return len(text.encode("utf-16-le")) // 2
+
+
 def _sections(text: str) -> list[str]:
     """Keep paragraphs/sections together so Markdown formatting survives splits."""
     pieces: list[str] = []
     current: list[str] = []
     for line in text.split("\n"):
-        if len(line) > _MAX_PART:
+        if _discord_units(line) > _MAX_PART:
             raise PartnerDiscordError(
                 "Linha Markdown longa demais para o Discord; quebre-a em frases menores"
             )
@@ -48,10 +55,10 @@ def split_discord_markdown(text: str) -> list[str]:
     parts: list[str] = []
     current = ""
     for section in _sections(text.strip()):
-        if len(section) > _MAX_PART:
+        if _discord_units(section) > _MAX_PART:
             raise PartnerDiscordError("Seção Markdown longa demais para o Discord")
         candidate = f"{current}\n\n{section}" if current else section
-        if len(candidate) > _MAX_PART:
+        if _discord_units(candidate) > _MAX_PART:
             parts.append(current)
             current = section
         else:
