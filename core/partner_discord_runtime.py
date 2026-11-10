@@ -47,6 +47,8 @@ def _marker(partner_id: int) -> str:
 def _validated_url(url: Any) -> str:
     if not isinstance(url, str) or not 0 < len(url) <= 1024:
         raise PartnerDiscordError("URL de parceiro inválida")
+    if any(ch.isspace() or ch in "<>\`" for ch in url):
+        raise PartnerDiscordError("URL contém caracteres inseguros para o Discord")
     parsed = urlsplit(url)
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname or parsed.username:
         raise PartnerDiscordError("Apenas URLs HTTP(S) são permitidas")
@@ -66,7 +68,10 @@ def build_partner_embed(payload: dict[str, Any]) -> discord.Embed:
     if not isinstance(links, list) or len(links) > 50:
         raise PartnerDiscordError("Quantidade de links inválida")
 
-    embed = discord.Embed(title=name.strip(), description=description.strip() or "Parceria BraFurries")
+    embed = discord.Embed(
+        title=discord.utils.escape_mentions(name.strip()),
+        description=discord.utils.escape_mentions(description.strip()) or "Parceria BraFurries",
+    )
     text_total = len(name) + len(embed.description or "") + len(_marker(partner_id))
     chunks: list[str] = []
     current = ""
@@ -94,8 +99,9 @@ def build_partner_embed(payload: dict[str, Any]) -> discord.Embed:
     return embed
 
 
-def _matches_embed(message: discord.Message, partner_id: int) -> bool:
-    return bool(getattr(message.author, "bot", False) and any(
+def _matches_embed(message: discord.Message, partner_id: int, bot_id: int) -> bool:
+    # Another bot can mimic a footer; only Coddy's own message proves ownership.
+    return bool(getattr(message.author, "id", None) == bot_id and any(
         getattr(getattr(embed, "footer", None), "text", None) == _marker(partner_id)
         for embed in message.embeds
     ))
@@ -150,7 +156,11 @@ async def _thread_parent(
         guild.default_role: discord.PermissionOverwrite(
             view_channel=True, send_messages=False, send_messages_in_threads=False,
             create_public_threads=False, create_private_threads=False,
-        )
+        ),
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, send_messages_in_threads=True,
+            create_public_threads=True, manage_threads=True,
+        ),
     }
     channel = await guild.create_forum(
         "parceiros", category=category, overwrites=overwrites,
