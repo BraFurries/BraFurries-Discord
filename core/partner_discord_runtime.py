@@ -6,6 +6,7 @@ selects representatives, or grants administrative rights.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import weakref
 from typing import Any
@@ -16,6 +17,8 @@ import discord
 _locks: weakref.WeakValueDictionary[tuple[int, int], asyncio.Lock] = weakref.WeakValueDictionary()
 _NAME_CLEANUP = re.compile(r"[^a-z0-9-]+")
 _MAX_EMBED_TOTAL = 5900
+_WRITE_BITS = ("send_messages", "send_messages_in_threads", "create_public_threads", "create_private_threads")
+_logger = logging.getLogger(__name__)
 
 
 class PartnerDiscordError(ValueError):
@@ -130,6 +133,107 @@ async def _category(guild: discord.Guild, requested_id: int | None) -> tuple[dis
     return channel, True
 
 
+
+def _is_administrator(subject: Any) -> bool:
+    # Discord's Administrator bypasses channel denies. Explicitly inspect the
+    # concrete target type: unknown/departed members are discord.Object and
+    # must not be treated as administrators.
+    if isinstance(subject, discord.Role):
+        return subject.permissions.administrator
+    if isinstance(subject, discord.Member):
+        return subject.guild_permissions.administrator
+    return False
+
+
+def _require_manage_overwrites(channel: discord.abc.GuildChannel) -> None:
+    # set_permissions needs Manage Roles, not Manage Channels. Check before
+    # making a partial series of permission changes.
+    if not channel.permissions_for(channel.guild.me).manage_roles:
+        raise PartnerDiscordError(
+            "Coddy precisa de Gerenciar Cargos no canal para corrigir as permissões da vitrine"
+        )
+
+
+async def _repair_overwrite(
+    channel: discord.abc.GuildChannel,
+    target: discord.Member | discord.Role,
+    updates: dict[str, bool],
+    *,
+    reason: str,
+    existing: discord.PermissionOverwrite | None = None,
+) -> bool:
+    # Uncached Object targets need the exact typed overwrite returned by
+    # channel.overwrites; overwrites_for(Object) guesses the wrong type for
+    # uncached roles and could discard unrelated permission bits.
+    overwrite = existing if existing is not None else channel.overwrites_for(target)
+    drift = {key: value for key, value in updates.items() if getattr(overwrite, key) is not value}
+    if not drift:
+        return False
+    for key, value in drift.items():
+        setattr(overwrite, key, value)
+    # Preserve all existing read, moderation and unrelated permissions.
+    # discord.py may return a type-aware Object for an uncached role or a
+    # former member. GuildChannel.set_permissions rejects that object, so
+    # apply its typed overwrite directly instead of aborting all partners.
+    if isinstance(target, discord.Object):
+        kind = getattr(target, "type", None)
+        if kind is discord.Role:
+            overwrite_type = 0
+        elif kind in (discord.User, discord.Member):
+            overwrite_type = 1
+        else:
+            raise PartnerDiscordError("Sobrescrita Discord sem tipo verificável")
+        allow, deny = overwrite.pair()
+        await channel._state.http.edit_channel_permissions(
+            channel.id, target.id, str(allow.value), str(deny.value),
+            overwrite_type, reason=reason,
+        )
+    else:
+        await channel.set_permissions(target, overwrite=overwrite, reason=reason)
+    _logger.info(
+        "Partner Discord permissions reconciled guild=%s channel=%s target=%s fields=%s",
+        channel.guild.id, channel.id, target.id, ",".join(sorted(drift)),
+    )
+    return True
+
+
+async def _deny_other_writers(
+    channel: discord.abc.GuildChannel, protected_ids: set[int], *, reason: str
+) -> None:
+    for subject, overwrite in tuple(channel.overwrites.items()):
+        if subject.id in protected_ids or _is_administrator(subject):
+            continue
+        drift = {key: False for key in _WRITE_BITS if getattr(overwrite, key) is True}
+        if drift:
+            await _repair_overwrite(channel, subject, drift, reason=reason, existing=overwrite)
+
+
+async def _reconcile_thread_parent(channel: discord.ForumChannel | discord.TextChannel) -> None:
+    # The API-selected destination is authoritative. Coddy enforces a
+    # read-only directory at the channel level; no per-thread ACL exists.
+    guild = channel.guild
+    _require_manage_overwrites(channel)
+    reason = "BraFurries: reconciliacao de escrita da vitrine de parceiros"
+    await _repair_overwrite(
+        channel, guild.default_role, {key: False for key in _WRITE_BITS}, reason=reason
+    )
+    # Including roles held by Coddy is intentional: its own member overwrite
+    # below restores its ability to post without granting it to other members.
+    await _deny_other_writers(channel, {guild.default_role.id, guild.me.id}, reason=reason)
+    await _repair_overwrite(
+        channel, guild.me,
+        {
+            "view_channel": True,
+            "read_message_history": True,
+            "send_messages": True,
+            "send_messages_in_threads": True,
+            "create_public_threads": True,
+            "manage_threads": True,
+        },
+        reason=reason,
+    )
+
+
 async def _thread_parent(
     guild: discord.Guild, category: discord.CategoryChannel, requested_id: int | None
 ) -> tuple[discord.ForumChannel | discord.TextChannel, bool]:
@@ -139,16 +243,7 @@ async def _thread_parent(
             raise PartnerDiscordError("O canal de threads precisa ser Fórum ou Texto")
         if getattr(channel, "category_id", None) != category.id:
             raise PartnerDiscordError("O canal de threads não pertence à categoria configurada")
-        # Public threads inherit parent permissions and cannot restrict
-        # individual representatives.
-        everyone = channel.permissions_for(guild.default_role)
-        if everyone.send_messages or everyone.send_messages_in_threads:
-            raise PartnerDiscordError("Configure o canal de threads como somente leitura")
-        for subject, overwrite in channel.overwrites.items():
-            if getattr(subject, "id", None) == getattr(guild.me, "id", None):
-                continue
-            if overwrite.send_messages is True or overwrite.send_messages_in_threads is True:
-                raise PartnerDiscordError("Remova outras permissões de escrita antes de adotar o canal")
+        await _reconcile_thread_parent(channel)
         return channel, False
     if any(x.name == "parceiros" and x.category_id == category.id for x in guild.channels):
         raise PartnerDiscordError("Já existe um canal parceiros nessa categoria; selecione seu ID")
@@ -159,7 +254,7 @@ async def _thread_parent(
         ),
         guild.me: discord.PermissionOverwrite(
             view_channel=True, send_messages=True, send_messages_in_threads=True,
-            create_public_threads=True, manage_threads=True,
+            create_public_threads=True, manage_threads=True, read_message_history=True,
         ),
     }
     channel = await guild.create_forum(
@@ -295,23 +390,29 @@ async def _resolve_member(guild: discord.Guild, user_id: int) -> discord.Member:
 
 
 async def _grant_channel(channel: discord.TextChannel, member: discord.Member) -> None:
-    everyone = channel.overwrites_for(channel.guild.default_role)
-    everyone.view_channel = True
-    everyone.send_messages = False
-    everyone.create_public_threads = False
-    everyone.create_private_threads = False
-    everyone.send_messages_in_threads = False
-    await channel.set_permissions(channel.guild.default_role, overwrite=everyone,
-                                  reason="Canal do parceiro: leitura pública")
-    bot_override = channel.overwrites_for(channel.guild.me)
-    bot_override.view_channel = True
-    bot_override.send_messages = True
-    await channel.set_permissions(channel.guild.me, overwrite=bot_override,
-                                  reason="Coddy publica a apresentação do parceiro")
-    overwrite = channel.overwrites_for(member)
-    overwrite.view_channel = True
-    overwrite.send_messages = True
-    await channel.set_permissions(member, overwrite=overwrite, reason="Representante do parceiro")
+    # A partner's explicitly selected/adopted channel has one regular writer:
+    # their verified representative. Existing role/member write overrides are
+    # drift, including those that could override @everyone's deny.
+    guild = channel.guild
+    _require_manage_overwrites(channel)
+    reason = "BraFurries: reconciliacao de escrita exclusiva do parceiro"
+    await _repair_overwrite(
+        channel, guild.default_role,
+        {"view_channel": True, **{key: False for key in _WRITE_BITS}},
+        reason=reason,
+    )
+    await _deny_other_writers(
+        channel, {guild.default_role.id, guild.me.id, member.id}, reason=reason
+    )
+    await _repair_overwrite(
+        channel, guild.me,
+        {"view_channel": True, "send_messages": True, "read_message_history": True},
+        reason=reason,
+    )
+    await _repair_overwrite(
+        channel, member, {"view_channel": True, "send_messages": True},
+        reason=reason,
+    )
 
 
 async def _revoke_member(channel: discord.TextChannel, discord_user_id: int | None) -> None:
@@ -396,15 +497,6 @@ async def _ensure_exclusive(
         already_managed = _require_channel_marker(candidate, partner_id)
         if not already_managed and not adopt_existing:
             raise PartnerDiscordError("Confirme expressamente a adoção do canal existente")
-        # Do not silently rewrite other custom role/user permissions. An
-        # existing channel must already have no third-party write overrides.
-        for subject, overwrite in candidate.overwrites.items():
-            if (
-                (overwrite.send_messages is True or overwrite.send_messages_in_threads is True)
-                and subject.id not in {guild.default_role.id, member.id, guild.me.id}
-                and not getattr(getattr(subject, "guild_permissions", None), "administrator", False)
-            ):
-                raise PartnerDiscordError("Canal contém outros escritores; ajuste permissões antes de adotar")
         if not already_managed:
             topic = (candidate.topic or "").strip()
             new_topic = f"{topic}\n{_marker(partner_id)}".strip()
