@@ -288,6 +288,11 @@ async def _grant_channel(channel: discord.TextChannel, member: discord.Member) -
     everyone.send_messages_in_threads = False
     await channel.set_permissions(channel.guild.default_role, overwrite=everyone,
                                   reason="Canal do parceiro: leitura pública")
+    bot_override = channel.overwrites_for(channel.guild.me)
+    bot_override.view_channel = True
+    bot_override.send_messages = True
+    await channel.set_permissions(channel.guild.me, overwrite=bot_override,
+                                  reason="Coddy publica a apresentação do parceiro")
     overwrite = channel.overwrites_for(member)
     overwrite.view_channel = True
     overwrite.send_messages = True
@@ -333,13 +338,16 @@ async def _ensure_exclusive(
         raise PartnerDiscordError("Vincule a conta Discord do representante antes de habilitar o canal")
     member = await _resolve_member(guild, representative_id)
     chosen = existing_id or channel_id
-    if previous is not None and chosen != previous.id:
-        await _revoke_member(previous, previous_representative_id)
-        if previously_managed:
-            overwrite = previous.overwrites_for(guild.default_role)
-            overwrite.view_channel = False
-            await previous.set_permissions(guild.default_role, overwrite=overwrite,
-                                           reason="Canal exclusivo transferido")
+    recovered_created = False
+    if chosen is None:
+        # A previous Discord call may have created the channel just before the
+        # API timed out. Recover by stable topic marker before ever creating.
+        candidates = [c for c in guild.text_channels if _require_channel_marker(c, partner_id)]
+        if len(candidates) > 1:
+            raise PartnerDiscordError("Mais de um canal com marcador deste parceiro; intervenção manual necessária")
+        if candidates:
+            chosen = candidates[0].id
+            recovered_created = "created-by-coddy" in (candidates[0].topic or "")
     created = False
     if chosen is None:
         overwrites = {
@@ -348,7 +356,7 @@ async def _ensure_exclusive(
         }
         channel = await guild.create_text_channel(
             _slug(name), category=category, overwrites=overwrites,
-            topic=_marker(partner_id), reason="Canal exclusivo de parceiro",
+            topic=f"{_marker(partner_id)} | created-by-coddy", reason="Canal exclusivo de parceiro",
         )
         created = True
     else:
@@ -360,21 +368,23 @@ async def _ensure_exclusive(
             raise PartnerDiscordError("Confirme expressamente a adoção do canal existente")
         # Do not silently rewrite other custom role/user permissions. An
         # existing channel must already have no third-party write overrides.
+        for subject, overwrite in candidate.overwrites.items():
+            if (
+                (overwrite.send_messages is True or overwrite.send_messages_in_threads is True)
+                and subject.id not in {guild.default_role.id, member.id, guild.me.id}
+                and not getattr(getattr(subject, "guild_permissions", None), "administrator", False)
+            ):
+                raise PartnerDiscordError("Canal contém outros escritores; ajuste permissões antes de adotar")
         if not already_managed:
-            for subject, overwrite in candidate.overwrites.items():
-                if overwrite.send_messages is True and subject.id not in {
-                    guild.default_role.id, member.id, guild.me.id
-                } and not getattr(getattr(subject, "guild_permissions", None), "administrator", False):
-                    raise PartnerDiscordError("Canal contém outros escritores; ajuste permissões antes de adotar")
             topic = (candidate.topic or "").strip()
             new_topic = f"{topic}\n{_marker(partner_id)}".strip()
             if len(new_topic) > 1024:
                 raise PartnerDiscordError("Tópico do canal muito longo para anexar a identificação")
             await candidate.edit(topic=new_topic, reason="Adoção explícita de canal de parceiro")
         channel = candidate
-        created = previously_managed and channel_id == channel.id
-    if previous_representative_id != representative_id:
-        await _revoke_member(channel, previous_representative_id)
+        created = recovered_created or (previously_managed and channel_id == channel.id)
+    # Grant the new representative first; if Discord rejects it, keep the old
+    # member's access until a later retry rather than locking everyone out.
     await _grant_channel(channel, member)
     message = None
     if intro_id is not None and channel.id == channel_id:
@@ -393,6 +403,15 @@ async def _ensure_exclusive(
         message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
     else:
         await message.edit(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+    if previous_representative_id != representative_id:
+        await _revoke_member(channel, previous_representative_id)
+    if previous is not None and previous.id != channel.id:
+        await _revoke_member(previous, previous_representative_id)
+        if previously_managed:
+            overwrite = previous.overwrites_for(guild.default_role)
+            overwrite.view_channel = False
+            await previous.set_permissions(guild.default_role, overwrite=overwrite,
+                                           reason="Canal exclusivo transferido")
     return channel.id, message.id, created
 
 
