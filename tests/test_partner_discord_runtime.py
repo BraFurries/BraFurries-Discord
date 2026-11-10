@@ -188,13 +188,13 @@ def test_revocation_of_departed_member_removes_stale_member_overwrite():
 
 def _permission_fixture(*, manageable=True):
     # Keep the overwrites mutable to simulate Discord's cache update events.
-    everyone = Mock(id=1, permissions=discord.Permissions.none())
-    bot = Mock(id=2, guild_permissions=discord.Permissions.none())
-    bot_role = Mock(id=3, permissions=discord.Permissions.none())
-    writer_role = Mock(id=4, permissions=discord.Permissions.none())
-    writer_member = Mock(id=5, guild_permissions=discord.Permissions.none())
-    admin_role = Mock(id=6, permissions=discord.Permissions(administrator=True))
-    representative = Mock(id=7, guild_permissions=discord.Permissions.none())
+    everyone = Mock(spec=discord.Role, id=1, permissions=discord.Permissions.none())
+    bot = Mock(spec=discord.Member, id=2, guild_permissions=discord.Permissions.none())
+    bot_role = Mock(spec=discord.Role, id=3, permissions=discord.Permissions.none())
+    writer_role = Mock(spec=discord.Role, id=4, permissions=discord.Permissions.none())
+    writer_member = Mock(spec=discord.Member, id=5, guild_permissions=discord.Permissions.none())
+    admin_role = Mock(spec=discord.Role, id=6, permissions=discord.Permissions(administrator=True))
+    representative = Mock(spec=discord.Member, id=7, guild_permissions=discord.Permissions.none())
     guild = SimpleNamespace(
         id=900,
         default_role=everyone,
@@ -309,3 +309,22 @@ def test_exclusive_channel_reconciles_other_writers_but_keeps_representative():
     initial_count = channel.set_permissions.await_count
     asyncio.run(_grant_channel(channel, subjects.representative))
     assert channel.set_permissions.await_count == initial_count
+
+def test_uncached_discord_overwrite_reconciles_by_type_without_discarding_read_acl():
+    channel, _, _ = _permission_fixture()
+    departed_member = discord.Object(id=222, type=discord.User)
+    original = discord.PermissionOverwrite(view_channel=False, send_messages=True,
+                                           add_reactions=True)
+    channel.overwrites[departed_member] = original
+    channel._state = SimpleNamespace(http=SimpleNamespace(edit_channel_permissions=AsyncMock()))
+    asyncio.run(_reconcile_thread_parent(channel))
+
+    method = channel._state.http.edit_channel_permissions
+    method.assert_awaited_once()
+    args = method.await_args.args
+    assert args[0] == channel.id
+    assert args[1] == 222
+    assert args[4] == 1   # member, never a role overwrite
+    assert original.send_messages is False
+    assert original.view_channel is False
+    assert original.add_reactions is True
