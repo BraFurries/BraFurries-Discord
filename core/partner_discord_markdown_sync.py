@@ -95,15 +95,10 @@ async def _find_existing(
             raise PartnerDiscordError("Não foi possível validar threads existentes") from exc
         if _matches_embed(starter, partner_id, parent.guild.me.id):
             matching.append(thread)
-        elif (
-            isinstance(parent, discord.ForumChannel)
-            and thread.name == name
-            and getattr(starter.author, "id", None) == parent.guild.me.id
-            and starter.content == first_text
-            and _own(starter, partner_id, parent.guild.me.id)
-        ):
-            matching.append(thread)
         elif thread.name == name:
+            # Plain bot-authored text has no partner identifier. Two partners
+            # may have the same content, so a matching title is NOT proof of
+            # ownership. Require a persisted thread ID, or manual recovery.
             ambiguous_title = True
     if len(matching) == 1:
         return matching[0]
