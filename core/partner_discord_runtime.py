@@ -119,12 +119,20 @@ async def _get_channel(guild: discord.Guild, channel_id: int) -> Any:
     return channel
 
 
-async def _category(guild: discord.Guild, requested_id: int | None) -> tuple[discord.CategoryChannel, bool]:
+async def _category(
+    guild: discord.Guild, requested_id: int | None, created_by_bot: bool = False
+) -> tuple[discord.CategoryChannel, bool]:
     if requested_id is not None:
-        channel = await _get_channel(guild, requested_id)
-        if not isinstance(channel, discord.CategoryChannel):
-            raise PartnerDiscordError("A categoria selecionada não é uma categoria")
-        return channel, False
+        try:
+            channel = await _get_channel(guild, requested_id)
+        except discord.NotFound:
+            # A manually selected resource must never be recreated implicitly.
+            if not created_by_bot:
+                raise PartnerDiscordError("Categoria Discord selecionada foi excluída; configure um novo destino")
+        else:
+            if not isinstance(channel, discord.CategoryChannel):
+                raise PartnerDiscordError("A categoria selecionada não é uma categoria")
+            return channel, False
     # Refuse ambiguous adoption: without an ID, a pre-existing matching name
     # must be selected explicitly by an administrator.
     if any(x.name.lower() == "parcerias brafurries" for x in guild.categories):
@@ -235,16 +243,22 @@ async def _reconcile_thread_parent(channel: discord.ForumChannel | discord.TextC
 
 
 async def _thread_parent(
-    guild: discord.Guild, category: discord.CategoryChannel, requested_id: int | None
+    guild: discord.Guild, category: discord.CategoryChannel, requested_id: int | None,
+    created_by_bot: bool = False,
 ) -> tuple[discord.ForumChannel | discord.TextChannel, bool]:
     if requested_id is not None:
-        channel = await _get_channel(guild, requested_id)
-        if not isinstance(channel, (discord.ForumChannel, discord.TextChannel)):
-            raise PartnerDiscordError("O canal de threads precisa ser Fórum ou Texto")
-        if getattr(channel, "category_id", None) != category.id:
-            raise PartnerDiscordError("O canal de threads não pertence à categoria configurada")
-        await _reconcile_thread_parent(channel)
-        return channel, False
+        try:
+            channel = await _get_channel(guild, requested_id)
+        except discord.NotFound:
+            if not created_by_bot:
+                raise PartnerDiscordError("Canal de threads selecionado foi excluído; configure um novo destino")
+        else:
+            if not isinstance(channel, (discord.ForumChannel, discord.TextChannel)):
+                raise PartnerDiscordError("O canal de threads precisa ser Fórum ou Texto")
+            if getattr(channel, "category_id", None) != category.id:
+                raise PartnerDiscordError("O canal de threads não pertence à categoria configurada")
+            await _reconcile_thread_parent(channel)
+            return channel, False
     if any(x.name == "parceiros" and x.category_id == category.id for x in guild.channels):
         raise PartnerDiscordError("Já existe um canal parceiros nessa categoria; selecione seu ID")
     overwrites = {
@@ -451,12 +465,19 @@ async def _ensure_exclusive(
     from core.partner_discord_markdown_sync import _own
     previous = None
     if channel_id is not None:
-        candidate = await _get_channel(guild, channel_id)
-        if not isinstance(candidate, discord.TextChannel):
-            raise PartnerDiscordError("Canal do parceiro deixou de ser de texto")
-        if not _require_channel_marker(candidate, partner_id):
-            raise PartnerDiscordError("Canal registrado não possui marcador de propriedade")
-        previous = candidate
+        try:
+            candidate = await _get_channel(guild, channel_id)
+        except discord.NotFound:
+            if not previously_managed:
+                raise PartnerDiscordError("Canal exclusivo adotado foi excluído; reconciliação manual necessária")
+            channel_id = None
+            intro_id = None
+        else:
+            if not isinstance(candidate, discord.TextChannel):
+                raise PartnerDiscordError("Canal do parceiro deixou de ser de texto")
+            if not _require_channel_marker(candidate, partner_id):
+                raise PartnerDiscordError("Canal registrado não possui marcador de propriedade")
+            previous = candidate
     if not enabled:
         if previous is not None:
             await _revoke_member(previous, previous_representative_id)
@@ -584,8 +605,12 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
         _locks[key] = lock
     async with lock:
         if active:
-            category, created_category = await _category(guild, category_id)
-            parent, created_parent = await _thread_parent(guild, category, parent_id)
+            category, created_category = await _category(
+                guild, category_id, request.get("categoryCreatedByBot") is True
+            )
+            parent, created_parent = await _thread_parent(
+                guild, category, parent_id, request.get("threadParentCreatedByBot") is True
+            )
             thread_id, intro_id, announcement_ids = await sync_markdown_thread(
                 parent, partner_id, request["name"].strip(), parts,
                 thread_id, intro_id, announcement_ids,
@@ -594,11 +619,18 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
         else:
             created_category = created_parent = False
             if thread_id is not None:
-                channel = await _get_channel(guild, thread_id)
-                if not isinstance(channel, discord.Thread):
-                    raise PartnerDiscordError("Thread inválida")
-                await _verify_starter_owner(channel, partner_id)
-                await channel.edit(locked=True, archived=True, reason="Parceria inativa")
+                try:
+                    channel = await _get_channel(guild, thread_id)
+                except discord.NotFound:
+                    # Already removed: idempotent retirement, not a new thread.
+                    thread_id = None
+                    intro_id = None
+                    announcement_ids = []
+                else:
+                    if not isinstance(channel, discord.Thread):
+                        raise PartnerDiscordError("Thread inválida")
+                    await _verify_starter_owner(channel, partner_id)
+                    await channel.edit(locked=True, archived=True, reason="Parceria inativa")
         if active or channel_id is not None:
             text_id, text_intro, text_managed = await _ensure_exclusive(
                 guild, category if active else None, partner_id, request["name"].strip(),
@@ -610,9 +642,9 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
         else:
             text_id, text_intro, text_managed = channel_id, channel_intro, False
         return {
-            "categoryId": str(category_id or category.id) if active else (str(category_id) if category_id else None),
+            "categoryId": str(category.id) if active else (str(category_id) if category_id else None),
             "categoryCreatedByBot": bool(created_category or request.get("categoryCreatedByBot")),
-            "threadParentChannelId": str(parent_id or parent.id) if active else (str(parent_id) if parent_id else None),
+            "threadParentChannelId": str(parent.id) if active else (str(parent_id) if parent_id else None),
             "threadParentCreatedByBot": bool(created_parent or request.get("threadParentCreatedByBot")),
             "threadId": str(thread_id) if thread_id else None,
             "threadIntroMessageId": str(intro_id) if intro_id else None,
