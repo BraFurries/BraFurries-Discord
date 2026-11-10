@@ -12,6 +12,7 @@ from core.partner_discord_runtime import (
     _id,
     _matches_embed,
     _find_thread,
+    _revoke_member,
     _require_channel_marker,
     _slug,
     build_partner_embed,
@@ -142,3 +143,40 @@ def test_thread_recovery_ignores_mutable_title_and_requires_original_bot():
     found = asyncio.run(_find_thread(parent, 8001, "Nome novo"))
     assert found is renamed_thread
     parent.fetch_message.assert_awaited_once_with(700)
+
+def test_revoke_member_overwrite_uses_member_not_untyped_discord_object():
+    import discord
+    member = SimpleNamespace(id=501)
+    guild = SimpleNamespace(get_member=lambda member_id: member)
+    channel = SimpleNamespace(
+        guild=guild,
+        overwrites_for=lambda user: discord.PermissionOverwrite(send_messages=True),
+        set_permissions=AsyncMock(),
+    )
+    asyncio.run(_revoke_member(channel, 501))
+    target = channel.set_permissions.await_args.args[0]
+    overwrite = channel.set_permissions.await_args.kwargs["overwrite"]
+    assert target is member
+    assert overwrite.send_messages is False
+
+
+def test_revocation_of_departed_member_removes_stale_member_overwrite():
+    import discord
+    not_found = discord.NotFound(
+        SimpleNamespace(status=404, reason="Not Found"), "Unknown Member",
+    )
+    http = SimpleNamespace(delete_channel_permissions=AsyncMock())
+    guild = SimpleNamespace(
+        get_member=lambda _: None,
+        fetch_member=AsyncMock(side_effect=not_found),
+    )
+    channel = SimpleNamespace(
+        id=321,
+        guild=guild,
+        _state=SimpleNamespace(http=http),
+        set_permissions=AsyncMock(),
+    )
+    asyncio.run(_revoke_member(channel, 501))
+    http.delete_channel_permissions.assert_awaited_once()
+    assert http.delete_channel_permissions.await_args.args[:2] == (321, 501)
+    channel.set_permissions.assert_not_awaited()
