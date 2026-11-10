@@ -46,6 +46,13 @@ def test_plain_markdown_is_not_rewritten_into_embed_or_tracking_id():
     assert "https://discord.gg/indie" not in "".join(parts)
 
 
+def test_legacy_partner_without_custom_markdown_keeps_registered_links():
+    text = "\n\n".join(render_announcement(sample(announcementMarkdown=None)))
+    assert text.startswith("# República Indie")
+    assert "https://discord.gg/indie" in text
+    assert "https://indie.example" in text
+
+
 def test_link_modes_preserve_inline_links_and_add_only_missing_links():
     announcement = "# Indie\n\nEntre pelo https://discord.gg/indie"
     parts = render_announcement(sample(
