@@ -18,9 +18,17 @@ def _own(message: discord.Message, partner_id: int, bot_id: int) -> bool:
     # messages rely on the trusted API's stored thread/message identifiers.
     if getattr(message.author, "id", None) != bot_id:
         return False
+    # Automatic previews of ordinary Markdown links are embeds too. A
+    # nonempty bot-authored text message with a web preview is still ours.
+    # Only explicit legacy BraFurries ownership markers are identity-bearing.
+    markers = [
+        getattr(getattr(embed, "footer", None), "text", "") or ""
+        for embed in getattr(message, "embeds", ())
+    ]
+    ownership = [marker for marker in markers if marker.startswith("BraFurries partner:")]
     return (
         _matches_embed(message, partner_id, bot_id)
-        if getattr(message, "embeds", None) else True
+        if ownership else bool(getattr(message, "content", ""))
     )
 
 
@@ -32,7 +40,11 @@ async def _owned_message(thread: discord.Thread, message_id: int, partner_id: in
 
 
 async def _edit_plain(message: discord.Message, text: str) -> None:
-    if message.content != text or message.embeds:
+    legacy = any(
+        (getattr(getattr(embed, "footer", None), "text", "") or "").startswith("BraFurries partner:")
+        for embed in message.embeds
+    )
+    if message.content != text or legacy:
         await message.edit(
             content=text, embed=None, allowed_mentions=discord.AllowedMentions.none()
         )
@@ -43,7 +55,7 @@ async def _recover_continuation(
 ):
     matches = []
     async for message in thread.history(limit=250):
-        if message.id in excluded_ids or message.content != text or message.embeds:
+        if message.id in excluded_ids or message.content != text:
             continue
         if _own(message, partner_id, thread.guild.me.id):
             matches.append(message)
@@ -88,7 +100,7 @@ async def _find_existing(
             and thread.name == name
             and getattr(starter.author, "id", None) == parent.guild.me.id
             and starter.content == first_text
-            and not starter.embeds
+            and _own(starter, partner_id, parent.guild.me.id)
         ):
             matching.append(thread)
         elif thread.name == name:
@@ -137,13 +149,14 @@ async def sync_markdown_thread(
             created = await parent.create_thread(
                 name=name, content=parts[0], auto_archive_duration=1440,
                 allowed_mentions=discord.AllowedMentions.none(),
+                suppress_embeds=True,
                 reason="Divulgação Markdown BraFurries",
             )
             thread, new_intro = created.thread, created.message
         else:
             starter = await parent.send(
                 content=f"💬 Apresentação de {name} — abra a thread",
-                allowed_mentions=discord.AllowedMentions.none(),
+                allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True,
             )
             thread = await starter.create_thread(name=name, auto_archive_duration=1440)
     if thread.archived:
@@ -182,7 +195,8 @@ async def sync_markdown_thread(
             if len(matches) > 1:
                 raise PartnerDiscordError("Mais de uma apresentação antiga; revise a thread")
             intro = matches[0] if matches else await thread.send(
-                parts[0], allowed_mentions=discord.AllowedMentions.none()
+                parts[0], allowed_mentions=discord.AllowedMentions.none(),
+                suppress_embeds=True
             )
 
     await _edit_plain(intro, parts[0])
@@ -199,7 +213,8 @@ async def sync_markdown_thread(
             message = await _recover_continuation(thread, content, excluded, partner_id)
         if message is None:
             message = await thread.send(
-                content, allowed_mentions=discord.AllowedMentions.none()
+                content, allowed_mentions=discord.AllowedMentions.none(),
+                suppress_embeds=True
             )
         else:
             await _edit_plain(message, content)
