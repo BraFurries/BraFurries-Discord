@@ -7,6 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import base64
+import binascii
+import hashlib
+import re
+
 import discord
 
 from core.partner_discord_runtime import PartnerDiscordError, _validated_url
@@ -122,7 +127,7 @@ def render_announcement(payload: dict[str, Any]) -> list[str]:
     # The image is a dedicated continuation with a native Discord image
     # preview. The announcement itself remains plain Markdown (no embed).
     image_url = payload.get("imageUrl")
-    if image_url is not None:
+    if image_url is not None and payload.get("imageData") is None:
         if not isinstance(image_url, str):
             raise PartnerDiscordError("Imagem do parceiro inválida")
         if image_url.strip():
@@ -130,6 +135,38 @@ def render_announcement(payload: dict[str, Any]) -> list[str]:
     if len(parts) > 12:
         raise PartnerDiscordError("Anúncio excede o número de mensagens permitido")
     return parts
+
+
+def decode_partner_image(payload: dict[str, Any]) -> tuple[bytes, str] | None:
+    """Only accept a bounded, verified WebP supplied by the authorized API.
+
+    Coddy never fetches administrator-controlled URLs, avoiding SSRF.
+    """
+    encoded = payload.get("imageData")
+    if encoded is None:
+        if payload.get("imageSha256") is not None or payload.get("imageContentType") is not None:
+            raise PartnerDiscordError("Metadados de imagem sem arquivo")
+        return None
+    digest = payload.get("imageSha256")
+    if (
+        not isinstance(encoded, str)
+        or len(encoded) > 7_000_000
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[a-f0-9]{64}", digest) is None
+        or payload.get("imageContentType") != "image/webp"
+    ):
+        raise PartnerDiscordError("Anexo da parceria inválido")
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise PartnerDiscordError("Imagem da parceria malformada") from exc
+    if not (12 <= len(content) <= 5 * 1024 * 1024) or not (
+        content.startswith(b"RIFF") and content[8:12] == b"WEBP"
+    ):
+        raise PartnerDiscordError("Imagem WebP inválida ou muito grande")
+    if hashlib.sha256(content).hexdigest() != digest:
+        raise PartnerDiscordError("Imagem da parceria não corresponde ao checksum")
+    return content, digest
 
 
 def decode_part_ids(raw: Any) -> list[int]:

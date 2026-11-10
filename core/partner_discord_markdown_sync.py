@@ -6,6 +6,8 @@ internal partner ID is included in publicly visible messages.
 """
 from __future__ import annotations
 
+import io
+
 import discord
 
 from core.partner_discord_runtime import (
@@ -56,6 +58,52 @@ async def _edit_plain(message: discord.Message, text: str, *, image_preview: boo
         if not image_preview:
             kwargs["embed"] = None
         await message.edit(**kwargs)
+
+
+_IMAGE_PREFIX = "brafurries-logo-"
+
+
+def _managed_logo(attachment: discord.Attachment) -> bool:
+    filename = getattr(attachment, "filename", "")
+    if not isinstance(filename, str) or not filename.startswith(_IMAGE_PREFIX):
+        return False
+    digest = filename[len(_IMAGE_PREFIX):-5] if filename.endswith(".webp") else ""
+    return len(digest) == 64 and all(ch in "0123456789abcdef" for ch in digest)
+
+
+def _image_file(content: bytes, digest: str) -> discord.File:
+    return discord.File(io.BytesIO(content), filename=f"{_IMAGE_PREFIX}{digest}.webp")
+
+
+async def _edit_intro(
+    message: discord.Message, text: str, image_bytes: bytes | None,
+    image_digest: str | None,
+) -> None:
+    attachments = list(getattr(message, "attachments", ()) or ())
+    ours = [attachment for attachment in attachments if _managed_logo(attachment)]
+    wanted = f"{_IMAGE_PREFIX}{image_digest}.webp" if image_bytes is not None else None
+    same_logo = (len(ours) == 1 and ours[0].filename == wanted) if wanted else not ours
+    legacy = any(
+        (getattr(getattr(embed, "footer", None), "text", "") or "").startswith("BraFurries partner:")
+        for embed in getattr(message, "embeds", ())
+    )
+    if message.content == text and same_logo and not legacy:
+        return
+    kwargs = {
+        "content": text,
+        "allowed_mentions": discord.AllowedMentions.none(),
+        "suppress": True,
+    }
+    if not same_logo:
+        # Keep attachments not owned by this feature. Replacing the managed
+        # logo is one atomic edit of the original starter message.
+        keep = [attachment for attachment in attachments if not _managed_logo(attachment)]
+        kwargs["attachments"] = (
+            [*keep, _image_file(image_bytes, image_digest)] if image_bytes is not None else keep
+        )
+    if legacy:
+        kwargs["embed"] = None
+    await message.edit(**kwargs)
 
 
 async def _recover_continuation(
@@ -128,6 +176,8 @@ async def sync_markdown_thread(
     intro_id: int | None,
     known_continuations: list[int],
     image_url: str | None = None,
+    image_bytes: bytes | None = None,
+    image_digest: str | None = None,
 ) -> tuple[int, int, list[int]]:
     if not parts:
         raise PartnerDiscordError("O anúncio não pode ficar vazio")
@@ -163,12 +213,15 @@ async def sync_markdown_thread(
     new_intro = None
     if thread is None:
         if isinstance(parent, discord.ForumChannel):
-            created = await parent.create_thread(
-                name=name, content=parts[0], auto_archive_duration=1440,
-                allowed_mentions=discord.AllowedMentions.none(),
-                suppress_embeds=True,
-                reason="Divulgação Markdown BraFurries",
-            )
+            initial = {
+                "name": name, "content": parts[0], "auto_archive_duration": 1440,
+                "allowed_mentions": discord.AllowedMentions.none(),
+                "suppress_embeds": True,
+                "reason": "Divulgação Markdown BraFurries",
+            }
+            if image_bytes is not None:
+                initial["file"] = _image_file(image_bytes, image_digest)
+            created = await parent.create_thread(**initial)
             thread, new_intro = created.thread, created.message
         else:
             starter = await parent.send(
@@ -182,6 +235,7 @@ async def sync_markdown_thread(
         await thread.edit(name=name, locked=True, reason="Vitrine somente leitura")
 
     bot_id = parent.guild.me.id
+    intro_was_created_with_image = bool(new_intro is not None and image_bytes is not None)
     if isinstance(parent, discord.ForumChannel):
         intro = new_intro or await _owned_message(thread, thread.id, partner_id)
         if intro_id is not None and intro_id != intro.id:
@@ -211,12 +265,21 @@ async def sync_markdown_thread(
                     matches.append(candidate)
             if len(matches) > 1:
                 raise PartnerDiscordError("Mais de uma apresentação antiga; revise a thread")
-            intro = matches[0] if matches else await thread.send(
-                parts[0], allowed_mentions=discord.AllowedMentions.none(),
-                suppress_embeds=True
-            )
+            if matches:
+                intro = matches[0]
+            else:
+                first = {
+                    "content": parts[0],
+                    "allowed_mentions": discord.AllowedMentions.none(),
+                    "suppress_embeds": True,
+                }
+                if image_bytes is not None:
+                    first["file"] = _image_file(image_bytes, image_digest)
+                    intro_was_created_with_image = True
+                intro = await thread.send(**first)
 
-    await _edit_plain(intro, parts[0])
+    if not intro_was_created_with_image:
+        await _edit_intro(intro, parts[0], image_bytes, image_digest)
     excluded = {intro.id, *known_continuations}
     applied = []
     for pos, content in enumerate(parts[1:]):

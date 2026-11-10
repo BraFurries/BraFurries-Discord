@@ -578,8 +578,9 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
         raise PartnerDiscordError("Requisição inválida")
     partner_id = _id(request.get("partnerId"), "partnerId")
     # Load only after the request has passed the internal status token checks.
-    from core.partner_discord_markdown import decode_part_ids, render_announcement
+    from core.partner_discord_markdown import decode_part_ids, decode_partner_image, render_announcement
     from core.partner_discord_markdown_sync import sync_markdown_thread
+    image = decode_partner_image(request)
     parts = render_announcement(request)
     announcement_ids = decode_part_ids(request.get("announcementPartMessageIds", []))
     category_id = _id(request.get("categoryId"), "categoryId", optional=True)
@@ -615,6 +616,8 @@ async def sync_partner_discord(guild: discord.Guild, request: dict[str, Any]) ->
                 parent, partner_id, request["name"].strip(), parts,
                 thread_id, intro_id, announcement_ids,
                 image_url=request.get("imageUrl"),
+                image_bytes=image[0] if image else None,
+                image_digest=image[1] if image else None,
             )
         else:
             created_category = created_parent = False
