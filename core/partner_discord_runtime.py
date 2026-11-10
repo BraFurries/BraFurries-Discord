@@ -160,8 +160,12 @@ async def _repair_overwrite(
     updates: dict[str, bool],
     *,
     reason: str,
+    existing: discord.PermissionOverwrite | None = None,
 ) -> bool:
-    overwrite = channel.overwrites_for(target)
+    # Uncached Object targets need the exact typed overwrite returned by
+    # channel.overwrites; overwrites_for(Object) guesses the wrong type for
+    # uncached roles and could discard unrelated permission bits.
+    overwrite = existing if existing is not None else channel.overwrites_for(target)
     drift = {key: value for key, value in updates.items() if getattr(overwrite, key) is not value}
     if not drift:
         return False
@@ -201,7 +205,7 @@ async def _deny_other_writers(
             continue
         drift = {key: False for key in _WRITE_BITS if getattr(overwrite, key) is True}
         if drift:
-            await _repair_overwrite(channel, subject, drift, reason=reason)
+            await _repair_overwrite(channel, subject, drift, reason=reason, existing=overwrite)
 
 
 async def _reconcile_thread_parent(channel: discord.ForumChannel | discord.TextChannel) -> None:
