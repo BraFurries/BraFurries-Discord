@@ -34,7 +34,7 @@ def sample(**changes):
 def test_emoji_count_uses_discord_utf16_units_not_python_character_count():
     with pytest.raises(PartnerDiscordError, match="Linha Markdown longa demais"):
         split_discord_markdown("🐑" * 1000)
-    result = split_discord_markdown("🐑" * 800 + "\\n\\n" + "🐑" * 800)
+    result = split_discord_markdown("🐑" * 800 + "\n\n" + "🐑" * 800)
     assert len(result) == 2
     assert all(len(item.encode("utf-16-le")) // 2 <= 1900 for item in result)
 
