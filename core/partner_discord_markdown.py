@@ -124,15 +124,15 @@ def render_announcement(payload: dict[str, Any]) -> list[str]:
     if len(content) > _MAX_SOURCE + 8000:
         raise PartnerDiscordError("Anúncio final excede os limites do Discord")
     parts = split_discord_markdown(content)
-    # Unmanaged external URLs retain a link-preview fallback. Verified R2
-    # images are uploaded as editable attachments to the original starter
-    # message instead; neither path changes the announcement Markdown.
+    # Images belong to the starter message, never to an extra continuation:
+    # verified R2 images are attachments; external URLs become image-only
+    # previews in the starter, with all presentation text still plain Markdown.
     image_url = payload.get("imageUrl")
-    if image_url is not None and payload.get("imageData") is None:
+    if image_url is not None:
         if not isinstance(image_url, str):
             raise PartnerDiscordError("Imagem do parceiro inválida")
         if image_url.strip():
-            parts.append(_validated_url(image_url.strip()))
+            _validated_url(image_url.strip())
     if len(parts) > 12:
         raise PartnerDiscordError("Anúncio excede o número de mensagens permitido")
     return parts

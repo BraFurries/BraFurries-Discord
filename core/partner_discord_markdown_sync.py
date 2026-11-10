@@ -11,7 +11,7 @@ import io
 import discord
 
 from core.partner_discord_runtime import (
-    PartnerDiscordError, _get_channel, _matches_embed,
+    PartnerDiscordError, _get_channel, _matches_embed, _validated_url,
 )
 
 
@@ -75,33 +75,63 @@ def _image_file(content: bytes, digest: str) -> discord.File:
     return discord.File(io.BytesIO(content), filename=f"{_IMAGE_PREFIX}{digest}.webp")
 
 
+def _external_image_embed(image_url: str) -> discord.Embed:
+    # Only the image uses a technical embed: the announcement's text stays
+    # native Discord Markdown, not an embed description or title.
+    return discord.Embed().set_image(url=_validated_url(image_url))
+
+
+def _external_image_url(embed: discord.Embed) -> str | None:
+    # Identify only our image-only rich embeds, not legacy partner embeds or
+    # automatic link previews for the announcement's other URLs.
+    data = embed.to_dict() if hasattr(embed, "to_dict") else {}
+    if data.get("type", "rich") != "rich" or set(data) - {"type", "image"}:
+        return None
+    image = data.get("image")
+    return image.get("url") if isinstance(image, dict) and isinstance(image.get("url"), str) else None
+
+
 async def _edit_intro(
     message: discord.Message, text: str, image_bytes: bytes | None,
-    image_digest: str | None,
+    image_digest: str | None, external_image_url: str | None = None,
 ) -> None:
     attachments = list(getattr(message, "attachments", ()) or ())
     ours = [attachment for attachment in attachments if _managed_logo(attachment)]
     wanted = f"{_IMAGE_PREFIX}{image_digest}.webp" if image_bytes is not None else None
     same_logo = (len(ours) == 1 and ours[0].filename == wanted) if wanted else not ours
+    embeds = list(getattr(message, "embeds", ()) or ())
     legacy = any(
         (getattr(getattr(embed, "footer", None), "text", "") or "").startswith("BraFurries partner:")
-        for embed in getattr(message, "embeds", ())
+        for embed in embeds
     )
-    if message.content == text and same_logo and not legacy:
+    previews = [url for embed in embeds if (url := _external_image_url(embed))]
+    # Do not consider arbitrary link-preview embeds as managed image previews.
+    preview_ok = (previews == [external_image_url]) if external_image_url else not previews
+    desired_suppression = external_image_url is None
+    # Old/mocked messages may omit flags; don't mistake that for an active
+    # unsuppressed image preview when the attachment is already correct.
+    suppressed = bool(getattr(getattr(message, "flags", None), "suppress_embeds", desired_suppression))
+    if (
+        message.content == text and same_logo and preview_ok and not legacy
+        and suppressed == desired_suppression
+    ):
         return
     kwargs = {
         "content": text,
         "allowed_mentions": discord.AllowedMentions.none(),
-        "suppress": True,
+        "suppress": desired_suppression,
     }
     if not same_logo:
-        # Keep attachments not owned by this feature. Replacing the managed
-        # logo is one atomic edit of the original starter message.
+        # Preserve all attachments we don't own, replacing only our logo.
         keep = [attachment for attachment in attachments if not _managed_logo(attachment)]
         kwargs["attachments"] = (
             [*keep, _image_file(image_bytes, image_digest)] if image_bytes is not None else keep
         )
-    if legacy:
+    if external_image_url:
+        kwargs["embed"] = _external_image_embed(external_image_url)
+    elif legacy or previews:
+        # Remove only our explicit image/legacy embed. Link previews in plain
+        # Markdown are not used as identity or authorization evidence.
         kwargs["embed"] = None
     await message.edit(**kwargs)
 
@@ -181,6 +211,9 @@ async def sync_markdown_thread(
 ) -> tuple[int, int, list[int]]:
     if not parts:
         raise PartnerDiscordError("O anúncio não pode ficar vazio")
+    # Only an external image URL needs an image-only preview. Managed R2
+    # images already arrive as validated bytes for a native attachment.
+    external_image = _validated_url(image_url.strip()) if image_bytes is None and image_url and image_url.strip() else None
     thread = None
     if thread_id is not None:
         try:
@@ -216,11 +249,13 @@ async def sync_markdown_thread(
             initial = {
                 "name": name, "content": parts[0], "auto_archive_duration": 1440,
                 "allowed_mentions": discord.AllowedMentions.none(),
-                "suppress_embeds": True,
+                "suppress_embeds": external_image is None,
                 "reason": "Divulgação Markdown BraFurries",
             }
             if image_bytes is not None:
                 initial["file"] = _image_file(image_bytes, image_digest)
+            elif external_image:
+                initial["embed"] = _external_image_embed(external_image)
             created = await parent.create_thread(**initial)
             thread, new_intro = created.thread, created.message
         else:
@@ -235,7 +270,7 @@ async def sync_markdown_thread(
         await thread.edit(name=name, locked=True, reason="Vitrine somente leitura")
 
     bot_id = parent.guild.me.id
-    intro_was_created_with_image = bool(new_intro is not None and image_bytes is not None)
+    intro_was_created_with_image = bool(new_intro is not None and (image_bytes is not None or external_image))
     if isinstance(parent, discord.ForumChannel):
         intro = new_intro or await _owned_message(thread, thread.id, partner_id)
         if intro_id is not None and intro_id != intro.id:
@@ -271,15 +306,18 @@ async def sync_markdown_thread(
                 first = {
                     "content": parts[0],
                     "allowed_mentions": discord.AllowedMentions.none(),
-                    "suppress_embeds": True,
+                    "suppress_embeds": external_image is None,
                 }
                 if image_bytes is not None:
                     first["file"] = _image_file(image_bytes, image_digest)
                     intro_was_created_with_image = True
+                elif external_image:
+                    first["embed"] = _external_image_embed(external_image)
+                    intro_was_created_with_image = True
                 intro = await thread.send(**first)
 
     if not intro_was_created_with_image:
-        await _edit_intro(intro, parts[0], image_bytes, image_digest)
+        await _edit_intro(intro, parts[0], image_bytes, image_digest, external_image)
     excluded = {intro.id, *known_continuations}
     applied = []
     for pos, content in enumerate(parts[1:]):

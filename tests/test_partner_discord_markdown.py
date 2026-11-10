@@ -12,7 +12,8 @@ from core.partner_discord_markdown import (
     decode_part_ids, decode_partner_image, render_announcement, split_discord_markdown,
 )
 from core.partner_discord_markdown_sync import (
-    _edit_plain, _edit_intro, _find_existing, _own, _recover_continuation, sync_markdown_thread,
+    _edit_plain, _edit_intro, _external_image_url, _find_existing,
+    _own, _recover_continuation, sync_markdown_thread,
 )
 from core.partner_discord_runtime import PartnerDiscordError, publish_partner_message
 
@@ -48,11 +49,12 @@ def test_plain_markdown_is_not_rewritten_into_embed_or_tracking_id():
     assert "https://discord.gg/indie" not in "".join(parts)
 
 
-def test_partner_image_is_appended_as_its_own_preview_without_embed_body():
+def test_external_partner_image_is_not_a_second_markdown_message():
     url = "https://cdn.example.org/partners/42/image/logo.webp"
     parts = render_announcement(sample(imageUrl=url))
-    assert parts[-1] == url
+    assert len(parts) == 1
     assert parts[0].startswith("# 🐑")
+    assert url not in parts[0]
     assert "partner:42" not in "".join(parts)
 
 
@@ -140,6 +142,107 @@ def test_new_forum_thread_uploads_image_in_original_starter_message():
     assert isinstance(kwargs["file"], discord.File)
     assert kwargs["file"].filename.endswith(digest + ".webp")
     intro.edit.assert_not_awaited()
+
+
+def test_external_image_updates_the_starter_without_changing_markdown():
+    old_url = "https://cdn.example.org/old.webp"
+    new_url = "https://cdn.example.org/new.webp"
+    initial_embed = discord.Embed().set_image(url=old_url)
+    msg = SimpleNamespace(
+        content="# Indie", embeds=[initial_embed], attachments=[],
+        flags=SimpleNamespace(suppress_embeds=False), edit=AsyncMock(),
+    )
+    assert _external_image_url(initial_embed) == old_url
+    asyncio.run(_edit_intro(msg, "# Indie", None, None, old_url))
+    msg.edit.assert_not_awaited()
+    asyncio.run(_edit_intro(msg, "# Indie", None, None, new_url))
+    msg.edit.assert_awaited_once()
+    kwargs = msg.edit.await_args.kwargs
+    assert kwargs["content"] == "# Indie"
+    assert kwargs["suppress"] is False
+    assert _external_image_url(kwargs["embed"]) == new_url
+    assert "attachments" not in kwargs
+
+
+def test_external_image_preview_can_be_removed_without_touching_other_attachments():
+    embed = discord.Embed().set_image(url="https://cdn.example.org/old.webp")
+    own = SimpleNamespace(filename="brafurries-logo-" + "a"*64 + ".webp")
+    other = SimpleNamespace(filename="preserve.png")
+    msg = SimpleNamespace(
+        content="# Indie", embeds=[embed], attachments=[own, other],
+        flags=SimpleNamespace(suppress_embeds=False), edit=AsyncMock(),
+    )
+    asyncio.run(_edit_intro(msg, "# Indie", None, None))
+    kwargs = msg.edit.await_args.kwargs
+    assert kwargs["embed"] is None
+    assert kwargs["attachments"] == [other]
+    assert kwargs["suppress"] is True
+
+
+def test_forum_starter_gets_external_image_preview_not_a_second_message():
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    thread = Mock(spec=discord.Thread)
+    thread.id = 3000
+    thread.parent_id = 1000
+    thread.guild = guild
+    thread.archived = False
+    thread.locked = True
+    thread.name = "Indie"
+    intro = SimpleNamespace(id=3000, content="# Indie", author=bot, embeds=[], edit=AsyncMock())
+    parent = Mock(spec=discord.ForumChannel)
+    parent.id = 1000
+    parent.guild = guild
+    parent.threads = []
+    async def no_archived(limit):
+        if False:
+            yield
+    parent.archived_threads = no_archived
+    parent.create_thread = AsyncMock(return_value=SimpleNamespace(thread=thread, message=intro))
+    url = "https://cdn.example.org/logo.webp"
+    result = asyncio.run(sync_markdown_thread(
+        parent, 42, "Indie", ["# Indie"], None, None, [], image_url=url
+    ))
+    assert result == (3000, 3000, [])
+    kwargs = parent.create_thread.await_args.kwargs
+    assert kwargs["content"] == "# Indie"
+    assert kwargs["suppress_embeds"] is False
+    assert _external_image_url(kwargs["embed"]) == url
+    assert "file" not in kwargs
+    intro.edit.assert_not_awaited()
+
+
+def test_existing_forum_starter_migrates_old_link_message_into_original(monkeypatch):
+    from core import partner_discord_markdown_sync as module
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(id=123, me=bot)
+    intro = SimpleNamespace(
+        id=3000, content="# Indie", author=bot, embeds=[], attachments=[],
+        flags=SimpleNamespace(suppress_embeds=True), edit=AsyncMock(),
+    )
+    old = SimpleNamespace(id=3001, content="https://cdn.example.org/old.webp",
+                          author=bot, embeds=[], delete=AsyncMock())
+    thread = Mock(spec=discord.Thread)
+    thread.id = 3000
+    thread.parent_id = 1000
+    thread.guild = guild
+    thread.archived = False
+    thread.locked = True
+    thread.name = "Indie"
+    thread.fetch_message = AsyncMock(side_effect=lambda mid: {3000: intro, 3001: old}[mid])
+    thread.send = AsyncMock()
+    parent = Mock(spec=discord.ForumChannel)
+    parent.id = 1000
+    parent.guild = guild
+    monkeypatch.setattr(module, "_get_channel", AsyncMock(return_value=thread))
+    result = asyncio.run(sync_markdown_thread(
+        parent, 42, "Indie", ["# Indie"], 3000, 3000, [3001],
+        image_url="https://cdn.example.org/new.webp",
+    ))
+    assert result == (3000, 3000, [])
+    assert _external_image_url(intro.edit.await_args.kwargs["embed"]) == "https://cdn.example.org/new.webp"
+    old.delete.assert_awaited_once()
+    thread.send.assert_not_awaited()
 
 
 def test_invalid_partner_image_is_rejected():
@@ -393,7 +496,7 @@ def test_deleted_thread_does_not_adopt_an_ambiguous_same_name(monkeypatch):
     parent.create_thread.assert_not_called()
 
 
-def test_image_only_continuation_is_sent_with_preview_and_stored_id():
+def test_legacy_image_only_continuation_is_not_created_again():
     bot = SimpleNamespace(id=99)
     guild = SimpleNamespace(id=123, me=bot)
     intro = SimpleNamespace(id=3000, content="# Indie", author=bot, embeds=[], edit=AsyncMock())
@@ -418,10 +521,11 @@ def test_image_only_continuation_is_sent_with_preview_and_stored_id():
     parent.create_thread = AsyncMock(return_value=SimpleNamespace(thread=thread, message=intro))
     url = "https://cdn.example.org/partners/42/image/logo.webp"
     result = asyncio.run(sync_markdown_thread(
-        parent, 42, "Indie", ["# Indie", url], None, None, [], image_url=url
+        parent, 42, "Indie", ["# Indie"], None, None, [], image_url=url
     ))
-    assert result == (3000, 3000, [3001])
-    assert thread.send.await_args.kwargs["suppress_embeds"] is False
+    assert result == (3000, 3000, [])
+    thread.send.assert_not_awaited()
+    assert _external_image_url(parent.create_thread.await_args.kwargs["embed"]) == url
 
 
 def test_representative_post_remains_allowed_after_plain_markdown_migration(monkeypatch):
