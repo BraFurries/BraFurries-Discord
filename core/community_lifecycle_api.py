@@ -166,7 +166,7 @@ class CommunityLifecycleApiClient:
             "PUT",
             f"/internal/community-networks/discord/{guild.id}",
             json=payload,
-        ) or {
+        ) or {}
 
     async def reconcile_presence(self, guilds: Iterable[discord.Guild]) -> dict[str, Any]:
         return await self._request(
