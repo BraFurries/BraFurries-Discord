@@ -45,10 +45,16 @@ async def _edit_plain(message: discord.Message, text: str, *, image_preview: boo
         for embed in message.embeds
     )
     if message.content != text or legacy or image_preview:
-        await message.edit(
-            content=text, embed=None, suppress=not image_preview,
-            allowed_mentions=discord.AllowedMentions.none()
-        )
+        kwargs = {
+            "content": text,
+            "suppress": not image_preview,
+            "allowed_mentions": discord.AllowedMentions.none(),
+        }
+        # Explicit embed=None removes a legacy announcement embed, but would
+        # also discard the native image preview from an image-only message.
+        if not image_preview:
+            kwargs["embed"] = None
+        await message.edit(**kwargs)
 
 
 async def _recover_continuation(
