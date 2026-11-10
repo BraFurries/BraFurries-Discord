@@ -96,7 +96,7 @@ def render_announcement(payload: dict[str, Any]) -> list[str]:
             label = item.get("label") or item.get("type") or "Link"
             if not isinstance(label, str) or len(label) > 128:
                 raise PartnerDiscordError("Rótulo de link inválido")
-            missing.append(f"- [{discord.utils.escape_markdown(label)}](<{url}>)")
+            missing.append(f"- **{discord.utils.escape_markdown(label)}:** <{url}>")
         if missing:
             content += "\n\n🔗 **Outros links**\n" + "\n".join(missing)
 
