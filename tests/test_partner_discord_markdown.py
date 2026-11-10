@@ -10,7 +10,7 @@ from core.partner_discord_markdown import (
     decode_part_ids, render_announcement, split_discord_markdown,
 )
 from core.partner_discord_markdown_sync import (
-    _edit_plain, _own, _recover_continuation, sync_markdown_thread,
+    _edit_plain, _find_existing, _own, _recover_continuation, sync_markdown_thread,
 )
 from core.partner_discord_runtime import PartnerDiscordError, publish_partner_message
 
@@ -251,3 +251,20 @@ def test_representative_post_remains_allowed_after_plain_markdown_migration(monk
     ))
     assert result["messageId"] == "2002"
     thread.send.assert_awaited_once()
+
+def test_untracked_plain_thread_cannot_be_claimed_by_another_partner():
+    bot = SimpleNamespace(id=99)
+    guild = SimpleNamespace(me=bot)
+    thread = SimpleNamespace(id=2000, name="Indie")
+    root = SimpleNamespace(author=bot, content="# Indie", embeds=[])
+    async def archives(limit):
+        if False:
+            yield
+    parent = Mock(spec=discord.ForumChannel)
+    parent.guild = guild
+    parent.threads = [thread]
+    parent.archived_threads = archives
+    thread.fetch_message = AsyncMock(return_value=root)
+    # Matching text is not proof of ownership after removing public partner IDs.
+    with pytest.raises(PartnerDiscordError, match="ambígua"):
+        asyncio.run(_find_existing(parent, 42, "Indie", "# Indie"))
