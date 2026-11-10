@@ -124,8 +124,9 @@ def render_announcement(payload: dict[str, Any]) -> list[str]:
     if len(content) > _MAX_SOURCE + 8000:
         raise PartnerDiscordError("Anúncio final excede os limites do Discord")
     parts = split_discord_markdown(content)
-    # The image is a dedicated continuation with a native Discord image
-    # preview. The announcement itself remains plain Markdown (no embed).
+    # Unmanaged external URLs retain a link-preview fallback. Verified R2
+    # images are uploaded as editable attachments to the original starter
+    # message instead; neither path changes the announcement Markdown.
     image_url = payload.get("imageUrl")
     if image_url is not None and payload.get("imageData") is None:
         if not isinstance(image_url, str):
