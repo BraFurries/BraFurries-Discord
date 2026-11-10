@@ -10,6 +10,8 @@ from aiohttp.test_utils import make_mocked_request
 from core.partner_discord_runtime import (
     PartnerDiscordError,
     _id,
+    _matches_embed,
+    _find_thread,
     _require_channel_marker,
     _slug,
     build_partner_embed,
@@ -112,3 +114,31 @@ def test_invalid_json_payload_never_invokes_discord_effects():
     assert result.status == 422
     assert json.loads(result.text)["error"] == "invalid_partner_request"
     operation.assert_not_awaited()
+
+def test_spoofed_embed_from_other_bot_does_not_prove_ownership():
+    message = SimpleNamespace(
+        author=SimpleNamespace(id=77, bot=True),
+        embeds=[build_partner_embed(sample())],
+    )
+    assert not _matches_embed(message, 8001, 88)
+    assert _matches_embed(message, 8001, 77)
+
+
+def test_thread_recovery_ignores_mutable_title_and_requires_original_bot():
+    intro = SimpleNamespace(author=SimpleNamespace(id=55, bot=True),
+                            embeds=[build_partner_embed(sample())])
+    renamed_thread = SimpleNamespace(id=700, name="Nome antigo")
+    parent = SimpleNamespace(
+        guild=SimpleNamespace(me=SimpleNamespace(id=55)),
+        threads=[renamed_thread],
+        fetch_message=AsyncMock(return_value=intro),
+    )
+
+    async def archived_threads(limit):
+        if False:
+            yield
+
+    parent.archived_threads = archived_threads
+    found = asyncio.run(_find_thread(parent, 8001, "Nome novo"))
+    assert found is renamed_thread
+    parent.fetch_message.assert_awaited_once_with(700)
