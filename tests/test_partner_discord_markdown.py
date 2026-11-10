@@ -10,7 +10,7 @@ from core.partner_discord_markdown import (
     decode_part_ids, render_announcement, split_discord_markdown,
 )
 from core.partner_discord_markdown_sync import (
-    _edit_plain, _recover_continuation, sync_markdown_thread,
+    _edit_plain, _own, _recover_continuation, sync_markdown_thread,
 )
 from core.partner_discord_runtime import PartnerDiscordError
 
@@ -148,3 +148,23 @@ def test_existing_forum_intro_and_continuation_are_edited_not_reposted(monkeypat
     root.edit.assert_awaited_once()
     continuation.edit.assert_awaited_once()
     thread.send.assert_not_awaited()
+
+def test_automatic_link_preview_is_not_mistaken_for_legacy_partner_embed():
+    preview = discord.Embed(title="Website", url="https://nextfur.net")
+    preview.set_footer(text="Website preview")
+    message = SimpleNamespace(
+        id=900, author=SimpleNamespace(id=99), content="# NextFUR https://nextfur.net",
+        embeds=[preview], edit=AsyncMock(),
+    )
+    assert _own(message, 42, 99)
+    asyncio.run(_edit_plain(message, message.content))
+    message.edit.assert_not_awaited()
+
+
+def test_foreign_legacy_owner_marker_is_never_adopted_as_plain_markdown():
+    legacy = discord.Embed(title="Outro parceiro")
+    legacy.set_footer(text="BraFurries partner:900")
+    message = SimpleNamespace(
+        author=SimpleNamespace(id=99), content="Texto", embeds=[legacy]
+    )
+    assert not _own(message, 42, 99)
