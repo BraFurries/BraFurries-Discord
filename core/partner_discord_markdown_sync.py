@@ -107,8 +107,10 @@ async def _edit_intro(
     previews = [url for embed in embeds if (url := _external_image_url(embed))]
     # Do not consider arbitrary link-preview embeds as managed image previews.
     preview_ok = (previews == [external_image_url]) if external_image_url else not previews
-    suppressed = bool(getattr(getattr(message, "flags", None), "suppress_embeds", False))
     desired_suppression = external_image_url is None
+    # Old/mocked messages may omit flags; don't mistake that for an active
+    # unsuppressed image preview when the attachment is already correct.
+    suppressed = bool(getattr(getattr(message, "flags", None), "suppress_embeds", desired_suppression))
     if (
         message.content == text and same_logo and preview_ok and not legacy
         and suppressed == desired_suppression
