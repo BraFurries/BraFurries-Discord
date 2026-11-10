@@ -172,25 +172,30 @@ async def _thread_parent(
 
 async def _find_thread(parent: discord.ForumChannel | discord.TextChannel, partner_id: int,
                        title: str) -> discord.Thread | None:
+    # Identity must be in the starter embed, never in a mutable title. This
+    # allows recovery after a crash between Discord creation and DB persistence.
     candidates = list(getattr(parent, "threads", ()) or ())
     try:
-        async for archived in parent.archived_threads(limit=100):
+        async for archived in parent.archived_threads(limit=500):
             candidates.append(archived)
-    except discord.Forbidden:
-        # Never pick a thread based on name alone when its ownership is uncertain.
-        pass
+    except discord.Forbidden as exc:
+        raise PartnerDiscordError("Sem permissão para verificar threads arquivadas") from exc
     checked: set[int] = set()
     for thread in candidates:
-        if thread.id in checked or thread.name != title:
+        if thread.id in checked:
             continue
         checked.add(thread.id)
         try:
             starter = await (thread.fetch_message(thread.id) if isinstance(parent, discord.ForumChannel)
                              else parent.fetch_message(thread.id))
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            continue
-        if _matches_embed(starter, partner_id):
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+            raise PartnerDiscordError("Não foi possível verificar a propriedade das threads existentes") from exc
+        if _matches_embed(starter, partner_id, parent.guild.me.id):
             return thread
+    # Beyond the bounded archive search, duplicate detection is uncertain.
+    # Reject auto-creation instead of silently creating a second partner thread.
+    if len(candidates) >= 500:
+        raise PartnerDiscordError("Vitrine com muitas threads arquivadas; reconciliação manual necessária")
     return None
 
 
@@ -202,11 +207,11 @@ async def _intro(thread: discord.Thread, known_id: int | None, partner_id: int,
             message = await thread.fetch_message(known_id)
         except discord.NotFound:
             pass
-        if message is not None and not _matches_embed(message, partner_id):
+        if message is not None and not _matches_embed(message, partner_id, thread.guild.me.id):
             raise PartnerDiscordError("Mensagem inicial não pertence a este parceiro")
     if message is None:
         async for previous in thread.history(limit=100):
-            if _matches_embed(previous, partner_id):
+            if _matches_embed(previous, partner_id, thread.guild.me.id):
                 message = previous
                 break
     if message is None:
@@ -230,7 +235,7 @@ async def _ensure_thread(parent: discord.ForumChannel | discord.TextChannel,
                              else parent.fetch_message(channel.id))
         except (discord.NotFound, discord.Forbidden):
             raise PartnerDiscordError("Não foi possível validar a thread já publicada")
-        if not _matches_embed(starter, partner_id):
+        if not _matches_embed(starter, partner_id, parent.guild.me.id):
             raise PartnerDiscordError("A thread informada pertence a outra publicação")
         thread = channel
     if thread is None:
@@ -239,7 +244,7 @@ async def _ensure_thread(parent: discord.ForumChannel | discord.TextChannel,
     if thread is None:
         if isinstance(parent, discord.ForumChannel):
             created = await parent.create_thread(
-                name=name, embed=embed, auto_archive_duration=10080,
+                name=name, embed=embed, auto_archive_duration=1440,
                 allowed_mentions=discord.AllowedMentions.none(),
                 reason="Publicação de parceiro BraFurries",
             )
@@ -247,7 +252,7 @@ async def _ensure_thread(parent: discord.ForumChannel | discord.TextChannel,
             new_intro_id = created.message.id
         else:
             starter = await parent.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
-            thread = await starter.create_thread(name=name, auto_archive_duration=10080)
+            thread = await starter.create_thread(name=name, auto_archive_duration=1440)
     if thread.archived:
         await thread.edit(archived=False, reason="Atualização do cadastro do parceiro")
     if not thread.locked or thread.name != name:
@@ -377,11 +382,11 @@ async def _ensure_exclusive(
             message = await channel.fetch_message(intro_id)
         except discord.NotFound:
             pass
-        if message is not None and not _matches_embed(message, partner_id):
+        if message is not None and not _matches_embed(message, partner_id, thread.guild.me.id):
             raise PartnerDiscordError("Mensagem inicial de canal não pertence ao parceiro")
     if message is None:
         async for previous_message in channel.history(limit=100):
-            if _matches_embed(previous_message, partner_id):
+            if _matches_embed(previous_message, partner_id, channel.guild.me.id):
                 message = previous_message
                 break
     if message is None:
@@ -463,7 +468,7 @@ async def publish_partner_message(guild: discord.Guild, request: dict[str, Any])
         raise PartnerDiscordError("A vitrine do parceiro não está protegida")
     valid = False
     async for message in thread.history(limit=100):
-        if _matches_embed(message, partner_id):
+        if _matches_embed(message, partner_id, thread.guild.me.id):
             valid = True
             break
     if not valid:
