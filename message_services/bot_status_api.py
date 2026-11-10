@@ -18,6 +18,7 @@ from core.bot_status import BotStatusSnapshot, build_status_payload
 from core.backup_runtime import BackupBusyError, BackupRestoreEngine
 from core.theme_runtime import ThemeRuntime
 from core.guild_management import apply_guild_operation, build_guild_resources, build_structure_preview, can_manage_guild
+from core.partner_discord_runtime import PartnerDiscordError, sync_partner_discord, publish_partner_message
 from core.auto_join_roles import add_auto_join_role, read_auto_join, remove_auto_join_role, set_auto_join_enabled
 from core.log_targets import log_target_metadata, selectable_log_targets, validate_log_target
 from core.log_types import DEFAULT_LOG_TYPES, LEGACY_CALL_LOG_TYPES, LOG_TYPE_LABELS, effective_call_config
@@ -599,6 +600,48 @@ class BotStatusApi:
             return web.json_response({'error': 'log_test_failed'}, status=422)
         return web.json_response({'ok': True})
 
+    def _internal_partner_guild(self, request: web.Request):
+        # Unlike human guild-management operations, API-authorized partner calls
+        # never trust a Discord user ID from the request. The internal bearer
+        # token is mandatory, even if the status API runs in legacy public mode.
+        if not self.token:
+            return None, web.json_response({'error': 'partner_auth_not_configured'}, status=503)
+        if not bool(self._initialized_getter()) or not self.bot.is_ready():
+            return None, web.json_response({'error': 'bot_not_ready'}, status=503)
+        try:
+            guild_id = int(request.match_info['guild_id'])
+        except (KeyError, TypeError, ValueError):
+            return None, web.json_response({'error': 'invalid_guild_id'}, status=400)
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return None, web.json_response({'error': 'guild_not_found'}, status=404)
+        return guild, None
+
+    async def _partner_operation(self, request: web.Request, action):
+        guild, error = self._internal_partner_guild(request)
+        if error is not None:
+            return error
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise PartnerDiscordError('Expected a JSON object')
+            return web.json_response(await action(guild, payload))
+        except (PartnerDiscordError, KeyError, TypeError, ValueError) as exc:
+            return web.json_response({'error': 'invalid_partner_request', 'message': str(exc)}, status=422)
+        except discord.Forbidden:
+            return web.json_response({'error': 'discord_permission_denied'}, status=403)
+        except discord.NotFound:
+            return web.json_response({'error': 'discord_resource_not_found'}, status=404)
+        except discord.HTTPException:
+            logger.exception('Discord partner operation failed for guild %s', guild.id)
+            return web.json_response({'error': 'discord_partner_operation_failed'}, status=503)
+
+    async def _handle_partner_sync(self, request: web.Request) -> web.Response:
+        return await self._partner_operation(request, sync_partner_discord)
+
+    async def _handle_partner_publish(self, request: web.Request) -> web.Response:
+        return await self._partner_operation(request, publish_partner_message)
+
     def _authorized_guild(self, request: web.Request):
         if not bool(self._initialized_getter()) or not self.bot.is_ready():
             return None, web.json_response({'error': 'bot_not_ready'}, status=503)
@@ -1170,6 +1213,8 @@ class BotStatusApi:
         app.router.add_post('/guilds/{guild_id}/themes/preview/{discord_user_id}', self._handle_theme_preview)
         app.router.add_post('/guilds/{guild_id}/themes/applications/{application_id}/apply/{discord_user_id}', self._handle_theme_apply_dispatch)
         app.router.add_post('/guilds/{guild_id}/themes/applications/{application_id}/restore/{discord_user_id}', self._handle_theme_restore_dispatch)
+        app.router.add_post('/guilds/{guild_id}/partners/sync', self._handle_partner_sync)
+        app.router.add_post('/guilds/{guild_id}/partners/publish', self._handle_partner_publish)
         app.router.add_get('/logs', self._handle_logs)
         app.router.add_get('/admin-stream', self._handle_admin_stream)
 
