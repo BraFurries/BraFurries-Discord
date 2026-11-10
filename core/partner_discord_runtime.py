@@ -302,11 +302,26 @@ async def _grant_channel(channel: discord.TextChannel, member: discord.Member) -
 async def _revoke_member(channel: discord.TextChannel, discord_user_id: int | None) -> None:
     if discord_user_id is None:
         return
-    subject = discord.Object(id=discord_user_id)
-    overwrite = channel.overwrites_for(subject)
-    if overwrite.send_messages is not None:
+    member = channel.guild.get_member(discord_user_id)
+    if member is None:
+        try:
+            member = await channel.guild.fetch_member(discord_user_id)
+        except discord.NotFound:
+            # The representative has left the guild. discord.py 2.3 does not
+            # accept discord.Object in set_permissions(), so remove their
+            # stale per-member overwrite by its actual HTTP endpoint.
+            try:
+                await channel._state.http.delete_channel_permissions(
+                    channel.id, discord_user_id, reason="Revogação de representante ausente"
+                )
+            except discord.NotFound:
+                pass
+            return
+    overwrite = channel.overwrites_for(member)
+    if overwrite.send_messages is True or overwrite.send_messages_in_threads is True:
         overwrite.send_messages = False
-        await channel.set_permissions(subject, overwrite=overwrite, reason="Revogação de representante")
+        overwrite.send_messages_in_threads = False
+        await channel.set_permissions(member, overwrite=overwrite, reason="Revogação de representante")
 
 
 async def _ensure_exclusive(
