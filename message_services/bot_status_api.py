@@ -25,6 +25,7 @@ from core.log_types import DEFAULT_LOG_TYPES, LEGACY_CALL_LOG_TYPES, LOG_TYPE_LA
 from core.recent_logs import RecentLogBufferHandler
 from core.runtime_metrics import RuntimeMetrics, RuntimeMetricsProvider
 from core.xp_runtime_control import refresh_xp_runtime, simulate_xp_runtime
+from core.coddy_web_operations import apply_presence, read_live_presence, writable_destinations, send_message
 from schemas.models.bot import MyBot
 
 
@@ -195,6 +196,66 @@ class BotStatusApi:
             {'ok': ready, 'state': 'ready' if ready else 'not_ready'},
             status=200 if ready else 503,
         )
+
+    def _web_operator_ready(self) -> web.Response | None:
+        # Even when legacy status runs in optional-token mode, sensitive Web
+        # mutations and their discovery routes must always fail closed.
+        if not self.token:
+            return web.json_response({"error": "web_operations_auth_not_configured"}, status=503)
+        if not bool(self._initialized_getter()) or not self.bot.is_ready():
+            return web.json_response({"error": "bot_not_ready"}, status=503)
+        return None
+
+    async def _handle_web_presence_get(self, request: web.Request) -> web.Response:
+        error = self._web_operator_ready()
+        if error is not None:
+            return error
+        return web.json_response(read_live_presence(self.bot))
+
+    async def _handle_web_presence_put(self, request: web.Request) -> web.Response:
+        error = self._web_operator_ready()
+        if error is not None:
+            return error
+        try:
+            payload = await request.json()
+            result = await apply_presence(self.bot, payload)
+            return web.json_response(result)
+        except (ValueError, TypeError, UnicodeEncodeError):
+            return web.json_response({"error": "invalid_presence"}, status=422)
+        except discord.HTTPException:
+            return web.json_response({"error": "discord_presence_unavailable"}, status=503)
+
+    async def _handle_web_message_targets(self, request: web.Request) -> web.Response:
+        error = self._web_operator_ready()
+        if error is not None:
+            return error
+        return web.json_response({"guilds": writable_destinations(self.bot)})
+
+    async def _handle_web_message_send(self, request: web.Request) -> web.Response:
+        error = self._web_operator_ready()
+        if error is not None:
+            return error
+        raw_guild_id = request.match_info.get("guild_id", "")
+        if not raw_guild_id.isascii() or not raw_guild_id.isdecimal():
+            return web.json_response({"error": "invalid_guild"}, status=422)
+        guild_id = int(raw_guild_id)
+        if guild_id <= 0 or guild_id > 9_223_372_036_854_775_807:
+            return web.json_response({"error": "invalid_guild"}, status=422)
+        try:
+            payload = await request.json()
+            result = await send_message(self.bot, guild_id, payload)
+            return web.json_response(result)
+        except (ValueError, TypeError, UnicodeEncodeError):
+            return web.json_response({"error": "invalid_message"}, status=422)
+        except LookupError as exc:
+            return web.json_response({"error": str(exc)}, status=404)
+        except discord.Forbidden:
+            return web.json_response({"error": "discord_permission_denied"}, status=403)
+        except discord.NotFound:
+            return web.json_response({"error": "channel_not_found"}, status=404)
+        except discord.HTTPException:
+            # The API must not replay after an ambiguous Discord failure.
+            return web.json_response({"error": "discord_send_uncertain"}, status=503)
 
     async def _handle_managed_guilds(self, request: web.Request) -> web.Response:
         if not bool(self._initialized_getter()) or not self.bot.is_ready():
@@ -1194,6 +1255,10 @@ class BotStatusApi:
         app.router.add_get('/health', self._handle_health)
         app.router.add_get('/live', self._handle_live)
         app.router.add_get('/ready', self._handle_ready)
+        app.router.add_get('/admin/presence', self._handle_web_presence_get)
+        app.router.add_put('/admin/presence', self._handle_web_presence_put)
+        app.router.add_get('/admin/message-targets', self._handle_web_message_targets)
+        app.router.add_post('/guilds/{guild_id}/admin-message', self._handle_web_message_send)
         app.router.add_get('/managed-guilds/{discord_user_id}', self._handle_managed_guilds)
         app.router.add_get('/users/{discord_user_id}', self._handle_discord_user_lookup)
         app.router.add_get('/guilds/{guild_id}/owner', self._handle_guild_owner)

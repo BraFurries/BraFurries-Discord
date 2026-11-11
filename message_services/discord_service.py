@@ -13,6 +13,7 @@ from core.temporary_role_reconciler import reconcile_temporary_roles
 from core.portaria_clarification import (register_open_clarification_ticket_views,
     reconcile_incomplete_clarification_tickets, reconcile_stale_closing_clarification_tickets)
 from message_services.bot_status_api import BotStatusApi
+from core.coddy_web_operations import reconcile_desired_presence
 from discord.ext import tasks
 from discord import app_commands
 from schemas.models.bot import *
@@ -475,6 +476,7 @@ async def initialize_bot():
     for guild in bot.guilds:
         await _refresh_invite_cache_for_guild(guild)
     initialized = True
+    asyncio.create_task(reconcile_desired_presence(bot))
     asyncio.create_task(_bootstrap_membership_sync_runtime())
     asyncio.create_task(
         _recover_vip_custom_roles_after_session_reset("COLD_START")
@@ -546,6 +548,7 @@ async def on_ready():
         logger.info(
             "Nova sessão READY após inicialização; verificando health/drift e custom roles VIP persistidos"
         )
+        asyncio.create_task(reconcile_desired_presence(bot))
         asyncio.create_task(_recover_memberships_from_network_health(startup=False))
         asyncio.create_task(
             _recover_vip_custom_roles_after_session_reset("NEW_GATEWAY_SESSION")
