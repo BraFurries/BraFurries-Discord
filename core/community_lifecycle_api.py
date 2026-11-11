@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from typing import Any, Iterable
 
@@ -144,15 +144,28 @@ class CommunityLifecycleApiClient:
                 f"Owner não disponível para guild {guild.id}",
                 retryable=True,
             )
+        payload: dict[str, Any] = {
+            "name": guild.name,
+            "ownerDiscordUserId": str(owner_id),
+            "active": bool(active),
+            "observedMembers": max(0, int(guild.member_count or 0)),
+        }
+        # Discord's own bot-member join date is stronger evidence than an
+        # observation timestamp, and permits safe historical backfill at startup.
+        bot_member = getattr(guild, "me", None) if active else None
+        bot_joined_at = getattr(bot_member, "joined_at", None)
+        if isinstance(bot_joined_at, datetime):
+            as_utc = (
+                bot_joined_at.replace(tzinfo=timezone.utc)
+                if bot_joined_at.tzinfo is None
+                else bot_joined_at.astimezone(timezone.utc)
+            )
+            payload["botJoinedAt"] = as_utc.isoformat()
+
         return await self._request(
             "PUT",
             f"/internal/community-networks/discord/{guild.id}",
-            json={
-                "name": guild.name,
-                "ownerDiscordUserId": str(owner_id),
-                "active": bool(active),
-                "observedMembers": max(0, int(guild.member_count or 0)),
-            },
+            json=payload,
         ) or {}
 
     async def reconcile_presence(self, guilds: Iterable[discord.Guild]) -> dict[str, Any]:

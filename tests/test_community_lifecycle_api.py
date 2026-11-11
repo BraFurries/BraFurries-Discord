@@ -111,6 +111,40 @@ def test_observe_network_uses_shared_internal_contract():
     }
 
 
+def test_observe_network_uses_provider_bot_join_date_when_available():
+    requests = []
+    client = CommunityLifecycleApiClient(
+        base_url="http://api.internal",
+        token="shared-token",
+        session_factory=session_factory([FakeResponse({"communityId": 5})], requests),
+    )
+    guild = FakeGuild([fake_member(1)])
+    guild.me = SimpleNamespace(
+        joined_at=datetime(2026, 11, 8, 19, 15, tzinfo=timezone.utc),
+    )
+
+    asyncio.run(client.observe_network(guild, active=True))
+
+    assert requests[0][2]["json"]["botJoinedAt"] == "2026-11-08T19:15:00+00:00"
+
+
+def test_observe_network_does_not_report_joined_at_on_guild_removal():
+    requests = []
+    client = CommunityLifecycleApiClient(
+        base_url="http://api.internal",
+        token="shared-token",
+        session_factory=session_factory([FakeResponse({"communityId": 5})], requests),
+    )
+    guild = FakeGuild([fake_member(1)])
+    guild.me = SimpleNamespace(
+        joined_at=datetime(2026, 11, 8, 19, 15, tzinfo=timezone.utc),
+    )
+
+    asyncio.run(client.observe_network(guild, active=False))
+
+    assert "botJoinedAt" not in requests[0][2]["json"]
+
+
 def test_observe_network_retry_recovers_transient_bootstrap_failure():
     class FlakyClient:
         def __init__(self):
