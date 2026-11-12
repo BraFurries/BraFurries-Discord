@@ -28,6 +28,12 @@ def command_names(path: str) -> set[str]:
     return names
 
 
+def test_retired_coddy_presence_and_falar_commands_are_not_registered():
+    # The removed interactions Cog contained only /coddy falar and /coddy status.
+    # Leaving the Python file absent prevents auto-discovery by load_cogs().
+    assert not (ROOT / "cogs/interactions.py").exists()
+
+
 def test_retired_admin_slash_commands_are_not_registered():
     assert {"simular", "voice-inspect"}.isdisjoint(command_names("cogs/xp.py"))
     assert {"gerar", "sincronizar"}.isdisjoint(command_names("cogs/backup.py"))
