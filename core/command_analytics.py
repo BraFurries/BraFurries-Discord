@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 import logging
 import os
 
-from core.database import async_execute
 
 logger = logging.getLogger(__name__)
 _MAX_SNOWFLAKE = 2**64 - 1
@@ -17,6 +16,12 @@ _MAX_SNOWFLAKE = 2**64 - 1
 
 def enabled() -> bool:
     return os.getenv("CODDY_COMMAND_METRICS_ENABLED", "").strip().lower() == "true"
+
+
+async def _write(query: str, params: tuple) -> int:
+    # Avoid database startup on importing analytics/tests.
+    from core.database import async_execute
+    return await async_execute(query, params)
 
 
 async def record_completion(
@@ -39,7 +44,7 @@ async def record_completion(
     if not normalized or len(normalized) > 128:
         return False
     try:
-        inserted = await async_execute(
+        inserted = await _write(
             """
             INSERT INTO stats_coddy_command_executions
                 (event_id,guild_id,command_name,command_kind,completed_at)
