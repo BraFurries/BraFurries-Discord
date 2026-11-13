@@ -31,6 +31,7 @@ import os
 from dotenv import load_dotenv
 import random
 from core.runtime_config import env_flag_enabled
+from core.command_analytics import record_completion as record_command_completion
 from core.community_lifecycle_api import (
     CommunityLifecycleApiClient,
     CommunityLifecycleApiError,
@@ -730,6 +731,28 @@ async def on_member_remove(member: discord.Member):
             member.guild.id,
             member.id,
         )
+
+
+@bot.event
+async def on_app_command_completion(interaction: discord.Interaction, command: app_commands.Command):
+    """Only successful slash interactions; Discord interaction IDs deduplicate retries."""
+    await record_command_completion(
+        event_id=interaction.id,
+        guild_id=interaction.guild_id,
+        command_name=command.qualified_name,
+        kind="SLASH",
+    )
+
+
+@bot.event
+async def on_command_completion(ctx: commands.Context):
+    """Successful legacy prefix commands; do not count attempts or errors."""
+    await record_command_completion(
+        event_id=ctx.message.id,
+        guild_id=ctx.guild.id if ctx.guild is not None else None,
+        command_name=ctx.command.qualified_name,
+        kind="PREFIX",
+    )
 
 
 @bot.tree.error
