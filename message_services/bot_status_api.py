@@ -371,6 +371,13 @@ class BotStatusApi:
             role_id = int(request.match_info['role_id'])
             if actor_id <= 0 or role_id <= 0:
                 raise ValueError('invalid_identifier')
+            # Refresh an incomplete cache instead of returning unsafe totals.
+            # The final preview still checks that the chunk has completed.
+            if not guild.chunked:
+                try:
+                    await asyncio.wait_for(guild.chunk(cache=True), timeout=20)
+                except (asyncio.TimeoutError, discord.ClientException, discord.HTTPException):
+                    return web.json_response({'error': 'member_cache_unavailable'}, status=503)
             preview = build_bulk_role_preview(guild, actor_id, role_id)
         except PermissionError as exc:
             return web.json_response({'error': str(exc)}, status=403)
