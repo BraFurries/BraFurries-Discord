@@ -6,6 +6,7 @@ from discord import app_commands
 from datetime import datetime, timedelta
 import json
 import logging
+import time
 from core.time_functions import now
 from core.database import (
     updateVoiceRecord,
@@ -31,13 +32,20 @@ class RecordsCog(commands.Cog):
         self.voice_session_starts: dict[tuple[int, int], datetime] = {}
         self.game_sessions: dict[tuple[int, int], tuple[datetime, str]] = {}
         self.blacklisted_games_by_guild: dict[int, set[str]] = {}
+        # API administrative edits are authoritative; refresh the legacy runtime
+        # cache periodically instead of keeping an unbounded stale snapshot.
+        self._blacklist_refreshed_at: dict[int, float] = {}
+        self._blacklist_ttl_seconds = 10.0
         self._blacklist_loads: dict[int, asyncio.Task[set[str]]] = {}
         super().__init__()
         self.save_records.start()
 
     async def _get_blacklisted_games(self, guild_id: int) -> set[str]:
         cached = self.blacklisted_games_by_guild.get(guild_id)
-        if cached is not None:
+        if cached is not None and (
+            time.monotonic() - self._blacklist_refreshed_at.get(guild_id, 0.0)
+            < self._blacklist_ttl_seconds
+        ):
             return cached
 
         existing_load = self._blacklist_loads.get(guild_id)
@@ -55,6 +63,7 @@ class RecordsCog(commands.Cog):
             self._blacklist_loads.pop(guild_id, None)
 
         self.blacklisted_games_by_guild[guild_id] = loaded_games
+        self._blacklist_refreshed_at[guild_id] = time.monotonic()
         return loaded_games
 
     def _open_voice_interval(self, channel_id: int, user_id: int, started_at: datetime):
