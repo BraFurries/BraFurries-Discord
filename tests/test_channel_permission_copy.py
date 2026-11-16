@@ -53,7 +53,9 @@ class Guild:
 
 
 def payload(**updates):
-    return dict(sourceChannelId="100", targetChannelId="200", **updates)
+    request = {"sourceChannelId": "100", "targetChannelId": "200"}
+    request.update(updates)
+    return request
 
 
 def test_preview_is_read_only_and_counts_both_acl_sets():
