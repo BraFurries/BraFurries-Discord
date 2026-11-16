@@ -361,6 +361,23 @@ class BotStatusApi:
             return error
         return web.json_response(build_guild_resources(guild))
 
+    async def _handle_role_tool_access(self, request: web.Request) -> web.Response:
+        if not self.token:
+            return web.json_response({'error': 'operation_auth_not_configured'}, status=503)
+        guild, error = self._authorized_guild(request)
+        if error is not None:
+            return error
+        try:
+            actor_id = int(request.match_info['discord_user_id'])
+            self._role_tool_runtime._authorized_admin(guild, actor_id)
+        except PermissionError:
+            return web.json_response({'error': 'role_tool_requires_administrator'}, status=403)
+        except (ValueError, KeyError):
+            return web.json_response({'error': 'invalid_identifier'}, status=422)
+        return web.json_response({'guildId': str(guild.id),
+                                  'actorDiscordUserId': str(actor_id),
+                                  'administrator': True})
+
     async def _handle_role_tool_dispatch(self, request: web.Request) -> web.Response:
         if not self.token:
             return web.json_response({'error': 'operation_auth_not_configured'}, status=503)
@@ -1369,6 +1386,7 @@ class BotStatusApi:
         app.router.add_get('/guilds/{guild_id}/members/{discord_user_id}', self._handle_member_state)
         app.router.add_get('/guilds/{guild_id}/resources/{discord_user_id}', self._handle_guild_resources)
         app.router.add_get('/guilds/{guild_id}/roles/{role_id}/bulk-preview/{discord_user_id}', self._handle_bulk_role_preview)
+        app.router.add_get('/guilds/{guild_id}/role-tools/access/{discord_user_id}', self._handle_role_tool_access)
         app.router.add_post('/guilds/{guild_id}/role-tools/{operation_id}/dispatch/{discord_user_id}', self._handle_role_tool_dispatch)
         app.router.add_post('/guilds/{guild_id}/structure-preview/{discord_user_id}', self._handle_structure_preview)
         app.router.add_post('/guilds/{guild_id}/xp/simulation/{discord_user_id}', self._handle_xp_simulation)
