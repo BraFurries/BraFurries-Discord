@@ -74,10 +74,11 @@ def test_bulk_fails_if_membership_changed_since_preview(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_worker_skips_already_assigned_and_bot_members_without_discord_network():
+def test_worker_skips_already_assigned_and_bot_members_without_discord_network(monkeypatch):
     async def scenario():
         runtime = RoleToolRuntime(Mock())
         role = SimpleNamespace(id=555)
+        monkeypatch.setattr(module, "_require_bulk_role_access", lambda *args: role)
         missing = SimpleNamespace(id=1, bot=False, roles=[])
         missing.add_roles = AsyncMock()
         already = SimpleNamespace(id=2, bot=False, roles=[role])
@@ -97,10 +98,11 @@ def test_worker_skips_already_assigned_and_bot_members_without_discord_network()
     asyncio.run(scenario())
 
 
-def test_failed_discord_role_assignment_is_counted_without_retrying_successes():
+def test_failed_discord_role_assignment_is_counted_without_retrying_successes(monkeypatch):
     async def scenario():
         runtime = RoleToolRuntime(Mock())
         role = SimpleNamespace(id=555)
+        monkeypatch.setattr(module, "_require_bulk_role_access", lambda *args: role)
         member = SimpleNamespace(id=1, bot=False, roles=[])
         member.add_roles = AsyncMock(side_effect=module.discord.Forbidden(
             Mock(status=403, reason="Forbidden"), "missing_permissions"
