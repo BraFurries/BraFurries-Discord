@@ -156,7 +156,22 @@ class RoleToolRuntime:
             except Exception:
                 logger.exception("Unhandled role-tool worker failure for guild %s", guild_id)
 
+    @staticmethod
+    async def _heartbeat(job: dict) -> None:
+        while True:
+            await asyncio.sleep(15)
+            async with async_pooled_connection() as cur:
+                await cur.execute(
+                    """UPDATE guild_role_tool_operations
+                       SET updated_at=UTC_TIMESTAMP(6)
+                       WHERE id=%s AND guild_id=%s AND status='RUNNING'""",
+                    (job["id"], job["guild_id"]),
+                )
+                if cur.rowcount != 1:
+                    return
+
     async def _run(self, guild: discord.Guild, job: dict) -> None:
+        heartbeat = asyncio.create_task(self._heartbeat(job))
         try:
             self._authorized_admin(guild, job["actor_discord_user_id"])
             if job["operation_type"] in ("BULK_ADD", "RECOVERY_APPLY"):
@@ -185,6 +200,9 @@ class RoleToolRuntime:
             logger.exception("Role tool operation %s failed", job["id"])
             error = str(exc) if isinstance(exc, (RoleToolRuntimeError, BulkRolePreviewError, PermissionError)) else "RUNTIME_ERROR"
             await self._mark_interrupted(job, error[:96])
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
 
     async def _mark_interrupted(self, job: dict, error: str) -> None:
         async with async_pooled_connection() as cur:
