@@ -127,7 +127,6 @@ class RoleToolRuntime:
                 )
 
     async def dispatch(self, guild: discord.Guild, actor_id: int, operation_id: int) -> dict:
-        self._authorized_admin(guild, actor_id)
         job = await self._read_job(guild.id, operation_id)
         if not job or job["actor_discord_user_id"] != actor_id:
             raise RoleToolRuntimeError("role_operation_not_found")
@@ -136,20 +135,9 @@ class RoleToolRuntime:
         if guild.id in self.tasks and not self.tasks[guild.id].done():
             raise RoleToolRuntimeError("another_role_operation_running")
 
-        if job["operation_type"] in ("BULK_ADD", "RECOVERY_APPLY"):
-            _require_bulk_role_access(guild, actor_id, int(job["role_id"]))
-        elif job["operation_type"] == "RECOVERY_SCAN":
-            channel = guild.get_channel(int(job["channel_id"]))
-            if not isinstance(channel, discord.TextChannel):
-                raise RoleToolRuntimeError("recovery_channel_not_found")
-            me = guild.me
-            permissions = channel.permissions_for(me) if me else None
-            if not permissions or not (permissions.view_channel and permissions.read_message_history):
-                raise PermissionError("bot_cannot_read_recovery_history")
-        else:
-            raise RoleToolRuntimeError("unsupported_operation_type")
-
-        # Claim first so repeated POSTs never launch two worker loops.
+        # The API verified admin access before persisting the request.
+        # Claim and run runtime preconditions in the worker so a role removed
+        # between API and Coddy cannot strand a PENDING guild-wide lock.
         if not await self._claim(job):
             raise RoleToolRuntimeError("role_operation_already_claimed")
 
@@ -170,6 +158,19 @@ class RoleToolRuntime:
 
     async def _run(self, guild: discord.Guild, job: dict) -> None:
         try:
+            self._authorized_admin(guild, job["actor_discord_user_id"])
+            if job["operation_type"] in ("BULK_ADD", "RECOVERY_APPLY"):
+                _require_bulk_role_access(guild, job["actor_discord_user_id"], int(job["role_id"]))
+            elif job["operation_type"] == "RECOVERY_SCAN":
+                channel = guild.get_channel(int(job["channel_id"]))
+                if not isinstance(channel, discord.TextChannel):
+                    raise RoleToolRuntimeError("RECOVERY_CHANNEL_NOT_FOUND")
+                me = guild.me
+                permissions = channel.permissions_for(me) if me else None
+                if not permissions or not (permissions.view_channel and permissions.read_message_history):
+                    raise PermissionError("BOT_CANNOT_READ_HISTORY")
+            else:
+                raise RoleToolRuntimeError("UNSUPPORTED_OPERATION")
             if job["operation_type"] == "BULK_ADD":
                 await self._run_bulk(guild, job)
             elif job["operation_type"] == "RECOVERY_SCAN":
