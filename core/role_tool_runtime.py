@@ -57,10 +57,10 @@ class RoleToolRuntime:
     async def _read_job(guild_id: int, operation_id: int) -> dict | None:
         async with role_tool_connection() as cur:
             await cur.execute(
-                """SELECT id, guild_id, community_id, actor_user_id, actor_discord_user_id,
-                          operation_type, role_id, channel_id, source_bot,
-                          source_operation_id, role_key, preview_fingerprint,
-                          expected_count, progress_current, status
+                """SELECT o.id, o.guild_id, o.community_id, o.actor_user_id, o.actor_discord_user_id,
+                          o.operation_type, o.role_id, o.channel_id, o.source_bot,
+                          o.source_operation_id, o.role_key, o.preview_fingerprint,
+                          o.expected_count, o.progress_current, o.status
                    FROM guild_role_tool_operations o
                    JOIN community_discord cd
                      ON cd.guild_id=o.guild_id AND cd.community_id=o.community_id
