@@ -18,6 +18,10 @@ from core.bot_status import BotStatusSnapshot, build_status_payload
 from core.backup_runtime import BackupBusyError, BackupRestoreEngine
 from core.theme_runtime import ThemeRuntime
 from core.guild_management import apply_guild_operation, build_guild_resources, build_structure_preview, can_manage_guild
+from core.channel_permission_copy import (
+    ChannelPermissionConflict, validate_channel_permission_copy,
+    build_channel_permission_copy_preview, apply_channel_permission_copy,
+)
 from core.partner_discord_runtime import PartnerDiscordError, sync_partner_discord, publish_partner_message
 from core.auto_join_roles import add_auto_join_role, read_auto_join, remove_auto_join_role, set_auto_join_enabled
 from core.log_targets import log_target_metadata, selectable_log_targets, validate_log_target
@@ -499,6 +503,50 @@ class BotStatusApi:
             'processed': len(effects),
             'effects': summarize_ban_effects(effects),
         })
+
+    async def _handle_channel_permission_copy_preview(self, request: web.Request) -> web.Response:
+        # The preview exposes effective channel ACL targets. It must never run
+        # with the legacy unauthenticated internal-status configuration.
+        if not self.token:
+            return web.json_response({'error': 'operation_auth_not_configured'}, status=503)
+        guild, error = self._authorized_guild(request)
+        if error is not None:
+            return error
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError('request must be an object')
+            source, target = validate_channel_permission_copy(
+                guild, int(request.match_info['discord_user_id']), payload)
+            return web.json_response(build_channel_permission_copy_preview(source, target))
+        except PermissionError:
+            return web.json_response({'error': 'channel_management_denied'}, status=403)
+        except (KeyError, TypeError, ValueError):
+            return web.json_response({'error': 'invalid_channel_permission_copy'}, status=422)
+
+    async def _handle_channel_permission_copy_apply(self, request: web.Request) -> web.Response:
+        if not self.token:
+            return web.json_response({'error': 'operation_auth_not_configured'}, status=503)
+        guild, error = self._authorized_guild(request)
+        if error is not None:
+            return error
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError('request must be an object')
+            actor_id = int(request.match_info['discord_user_id'])
+            # apply performs validation again after acquiring its per-target lock.
+            return web.json_response(await apply_channel_permission_copy(guild, actor_id, payload))
+        except ChannelPermissionConflict:
+            return web.json_response({'error': 'channel_permissions_changed_since_preview'}, status=409)
+        except (PermissionError, discord.Forbidden):
+            return web.json_response({'error': 'channel_management_denied'}, status=403)
+        except discord.NotFound:
+            return web.json_response({'error': 'channel_not_found'}, status=404)
+        except discord.HTTPException:
+            return web.json_response({'error': 'discord_channel_edit_failed'}, status=503)
+        except (KeyError, TypeError, ValueError):
+            return web.json_response({'error': 'invalid_channel_permission_copy'}, status=422)
 
     async def _handle_guild_operation(self, request: web.Request) -> web.Response:
         # Read-only status endpoints retain their legacy optional-token mode,
@@ -1268,6 +1316,8 @@ class BotStatusApi:
         app.router.add_post('/guilds/{guild_id}/xp/simulation/{discord_user_id}', self._handle_xp_simulation)
         app.router.add_post('/guilds/{guild_id}/xp/runtime-refresh/{discord_user_id}', self._handle_xp_runtime_refresh)
         app.router.add_post('/guilds/{guild_id}/operations/{discord_user_id}', self._handle_guild_operation)
+        app.router.add_post('/guilds/{guild_id}/channel-permissions/preview/{discord_user_id}', self._handle_channel_permission_copy_preview)
+        app.router.add_post('/guilds/{guild_id}/channel-permissions/apply/{discord_user_id}', self._handle_channel_permission_copy_apply)
         app.router.add_post('/guilds/{guild_id}/identity-bans/propagate', self._handle_identity_ban_propagation)
         app.router.add_get('/guilds/{guild_id}/auto-join-roles/{discord_user_id}', self._handle_auto_join_get)
         app.router.add_get('/guilds/{guild_id}/logs/{discord_user_id}', self._handle_log_configs)
