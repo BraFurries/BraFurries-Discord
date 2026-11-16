@@ -171,21 +171,29 @@ class RoleToolRuntime:
                 logger.exception("Unhandled role-tool worker failure for guild %s", guild_id)
 
     @staticmethod
-    async def _heartbeat(job: dict) -> None:
-        while True:
-            await asyncio.sleep(15)
-            async with role_tool_connection() as cur:
-                await cur.execute(
-                    """UPDATE guild_role_tool_operations
-                       SET updated_at=CURRENT_TIMESTAMP(6)
-                       WHERE id=%s AND guild_id=%s AND status='RUNNING'""",
-                    (job["id"], job["guild_id"]),
-                )
-                if cur.rowcount != 1:
-                    return
+    async def _heartbeat(job: dict, worker: asyncio.Task) -> None:
+        try:
+            while True:
+                await asyncio.sleep(15)
+                async with role_tool_connection() as cur:
+                    await cur.execute(
+                        """UPDATE guild_role_tool_operations
+                           SET updated_at=CURRENT_TIMESTAMP(6)
+                           WHERE id=%s AND guild_id=%s AND status='RUNNING'""",
+                        (job["id"], job["guild_id"]),
+                    )
+                    if cur.rowcount != 1:
+                        raise RoleToolRuntimeError("HEARTBEAT_JOB_NOT_RUNNING")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A stale reaper may release this guild's unique active slot.
+            # Never continue changing roles after losing the DB heartbeat.
+            logger.exception("Role-tool heartbeat stopped for operation %s", job["id"])
+            worker.cancel()
 
     async def _run(self, guild: discord.Guild, job: dict) -> None:
-        heartbeat = asyncio.create_task(self._heartbeat(job))
+        heartbeat = asyncio.create_task(self._heartbeat(job, asyncio.current_task()))
         try:
             self._authorized_admin(guild, job["actor_discord_user_id"])
             if job["operation_type"] in ("BULK_ADD", "RECOVERY_APPLY"):
@@ -229,7 +237,10 @@ class RoleToolRuntime:
             )
             r = await cur.fetchone() or {}
         added = int(r.get("added_count") or 0)
-        await self._complete(job, "PARTIAL" if added else "FAILED",
+        # A failed/cancelled write job may already have mutated Discord roles
+        # beyond the last persisted checkpoint. Never claim zero side effects.
+        maybe_changed = job["operation_type"] in {"BULK_ADD", "RECOVERY_APPLY"}
+        await self._complete(job, "PARTIAL" if added or maybe_changed else "FAILED",
                              current=int(r.get("progress_current") or 0),
                              total=int(r.get("progress_total") or 0),
                              added=added, skipped=int(r.get("skipped_count") or 0),
@@ -258,6 +269,11 @@ class RoleToolRuntime:
                     except asyncio.QueueEmpty:
                         return
                     try:
+                        # Permission/hierarchy checks use the local Discord cache.
+                        # Check each member to stop immediately on revoked access.
+                        _require_bulk_role_access(
+                            guild, job["actor_discord_user_id"], role.id
+                        )
                         member = guild.get_member(member_id)
                         if member is None and allow_missing:
                             try:
@@ -281,15 +297,17 @@ class RoleToolRuntime:
                         current += 1
                         now = time.monotonic()
                         if current == total or (current % 25 == 0 and now - last_update >= 2):
-                            _require_bulk_role_access(
-                                guild, job["actor_discord_user_id"], role.id
-                            )
                             last_update = now
                             await self._progress(job, current=current, total=total,
                                 added=added, skipped=skipped, failed=failed)
                         queue.task_done()
 
-        await asyncio.gather(*(worker() for _ in range(min(3, total))))
+        # TaskGroup cancels and joins *all* remaining member workers when
+        # one fails. gather() would return early while other tasks continue
+        # mutating Discord after the operation has been marked terminal.
+        async with asyncio.TaskGroup() as workers:
+            for _ in range(min(3, total)):
+                workers.create_task(worker())
         await self._complete(job, "PARTIAL" if failed else "SUCCEEDED",
                              current=current, total=total,
                              added=added, skipped=skipped, failed=failed)
