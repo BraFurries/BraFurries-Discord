@@ -38,6 +38,13 @@ def test_retired_admin_slash_commands_are_not_registered():
     assert {"simular", "voice-inspect"}.isdisjoint(command_names("cogs/xp.py"))
     assert {"gerar", "sincronizar"}.isdisjoint(command_names("cogs/backup.py"))
     assert "configurar_portaria" not in command_names("cogs/forms.py")
+    assert {"conectar_conta", "cores_staff", "atualizar-comandos"}.isdisjoint(
+        command_names("cogs/admin.py")
+    )
+    assert "auditar_ficha_portaria" not in command_names("cogs/forms.py")
+    assert "@bot.tree.command(name=f'testes'" not in (
+        ROOT / "message_services/discord_service.py"
+    ).read_text(encoding="utf-8")
     assert {"portaria_aprovar", "portaria_liberar_conta"}.isdisjoint(
         command_names("cogs/moderation.py")
     )
@@ -45,9 +52,9 @@ def test_retired_admin_slash_commands_are_not_registered():
 
 def test_retained_admin_slash_commands_still_exist():
     assert "listar" in command_names("cogs/backup.py")
-    assert {"listar", "auditar_ficha_portaria"}.issubset(
-        command_names("cogs/forms.py")
-    )
+    assert "listar" in command_names("cogs/forms.py")
+    # The web permission-copy tool must exist before /migrate permissoes canais is retired.
+    assert "canais" in command_names("cogs/backup.py")
     assert {"config", "ajustar"}.issubset(command_names("cogs/xp.py"))
 
 
