@@ -14,7 +14,6 @@ from core.database import (
     updateGameRecord,
     getAllGameRecords,
     getBlacklistedGames,
-    addGameToBlacklist,
     getLogConfig,
     upsertActiveCallLog,
     getActiveCallLogs,
@@ -447,20 +446,6 @@ class RecordsCog(commands.Cog):
                 embeds.append(embed)
 
             await ctx.followup.send(content='# Recordes do servidor', embeds=embeds)
-
-    @app_commands.command(name='recorde_adicionar_blacklist', description='Adiciona um jogo à blacklist de recordes')
-    async def addRecordBlacklist(self, ctx: discord.Interaction, *, jogo: str):
-        await ctx.response.defer()
-        if addGameToBlacklist(ctx.guild.id, jogo):
-            (await self._get_blacklisted_games(ctx.guild.id)).add(jogo)
-            # remove any ongoing sessions for this game
-            for session_key, (start, game_name) in list(self.game_sessions.items()):
-                guild_id, _ = session_key
-                if guild_id == ctx.guild.id and game_name == jogo:
-                    self.game_sessions.pop(session_key, None)
-            await ctx.followup.send(content=f'Jogo "{jogo}" adicionado à blacklist!')
-        else:
-            await ctx.followup.send(content='Não foi possível adicionar o jogo à blacklist.', ephemeral=True)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):

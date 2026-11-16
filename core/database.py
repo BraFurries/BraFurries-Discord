@@ -7730,6 +7730,12 @@ def updateGameRecord(guild_id:int, discord_user:discord.Member, seconds:int, gam
     user_id = includeUser(discord_user, guild_id)
     with pooled_connection() as cursor:
         try:
+            cursor.execute(
+                "SELECT 1 FROM record_global_blacklisted_games WHERE game_name = %s LIMIT 1",
+                (game_name,)
+            )
+            if cursor.fetchone():
+                return False
             sql = """
             INSERT INTO user_records
               (user_id, server_guild_id, game_time, game_name)
@@ -7837,45 +7843,34 @@ def getGameTime(guild_id:int, discord_user:discord.Member) -> int:
         return myresult[0] if myresult else 0
 
 
-def getAllGameRecords(guild_id: int, limit: int = 10, blacklist: list[str] = None):
-    """Retrieve top game time records for a guild sorted by duration"""
+def getAllGameRecords(guild_id: int, limit: int = 10, blacklist: list[str] | None = None):
+    """Retrieve top game records using the global exclusion policy."""
     with pooled_connection() as cursor:
-        exclusion = ""
-        if blacklist:
-            names = "', '".join(name.replace("'", "\\'") for name in blacklist)
-            exclusion = f" AND user_records.game_name NOT IN ('{names}')"
-        query = f"""SELECT user_discord.discord_user_id, user_records.game_time, user_records.game_name
-    FROM user_records
-    JOIN user_discord ON user_discord.user_id = user_records.user_id
-    WHERE user_records.server_guild_id = {guild_id}{exclusion}
-    ORDER BY user_records.game_time DESC
-    LIMIT {limit};"""
-        cursor.execute(query)
+        query = """
+        SELECT user_discord.discord_user_id, user_records.game_time, user_records.game_name
+        FROM user_records
+        JOIN user_discord ON user_discord.user_id = user_records.user_id
+        WHERE user_records.server_guild_id = %s
+          AND NOT EXISTS (
+              SELECT 1 FROM record_global_blacklisted_games bg
+              WHERE bg.game_name = user_records.game_name
+          )
+        ORDER BY user_records.game_time DESC
+        LIMIT %s
+        """
+        cursor.execute(query, (guild_id, limit))
         records = cursor.fetchall()
-        return [{'user_id': row["discord_user_id"], 'seconds': row["game_time"], 'game': row["game_name"]} for row in records]
+        return [
+            {"user_id": row["discord_user_id"], "seconds": row["game_time"], "game": row["game_name"]}
+            for row in records
+        ]
 
 
 def getBlacklistedGames(guild_id: int) -> list[str]:
-    """Retrieve all blacklisted games for a guild"""
+    """Return the single global blacklist; guild_id is a legacy call-site parameter."""
     with pooled_connection() as cursor:
-        query = f"""SELECT game_name FROM blacklisted_games
-    WHERE server_guild_id = {guild_id};"""
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        return [row["game_name"] for row in rows]
-
-
-def addGameToBlacklist(guild_id: int, game_name: str) -> bool:
-    """Add a game to the blacklist for a guild"""
-    with pooled_connection() as cursor:
-        try:
-            query = """INSERT IGNORE INTO blacklisted_games (server_guild_id, game_name)
-    VALUES (%s, %s);"""
-            cursor.execute(query, (guild_id, game_name))
-            return True
-        except mysql.connector.Error as err:
-            logging.error(f"Database error occurred: {err}")
-            return False
+        cursor.execute("SELECT game_name FROM record_global_blacklisted_games")
+        return [row["game_name"] for row in cursor.fetchall()]
 
 
 def getVoiceRecordPosition(guild_id: int, discord_user: discord.Member | discord.User):
@@ -7922,9 +7917,8 @@ def getGameRecordPosition(
            AND u2.game_time > ur.game_time
            AND NOT EXISTS (
              SELECT 1
-               FROM blacklisted_games bg2
-              WHERE bg2.server_guild_id = u2.server_guild_id
-                AND bg2.game_name     = u2.game_name
+               FROM record_global_blacklisted_games bg2
+              WHERE bg2.game_name     = u2.game_name
            )
       ) AS rank
     FROM user_records ur
@@ -7932,9 +7926,8 @@ def getGameRecordPosition(
       AND ur.user_id        = %s
       AND NOT EXISTS (
         SELECT 1
-          FROM blacklisted_games bg
-         WHERE bg.server_guild_id = ur.server_guild_id
-           AND bg.game_name       = ur.game_name
+          FROM record_global_blacklisted_games bg
+         WHERE bg.game_name       = ur.game_name
       )
     """
     with pooled_connection() as cursor:
@@ -8066,8 +8059,8 @@ def getProfileData(
             "       AND u2.game_time > ur.game_time"
             "       AND NOT EXISTS ("
             "         SELECT 1"
-            "           FROM blacklisted_games bg2"
-            "          WHERE bg2.server_guild_id = u2.server_guild_id"
+            "           FROM record_global_blacklisted_games bg2"
+            "          WHERE 1=1"
             "            AND bg2.game_name     = u2.game_name"
             "       )"
             ") AS rank "
@@ -8075,8 +8068,8 @@ def getProfileData(
             "WHERE ur.server_guild_id = %s "
             "  AND ur.user_id        = %s "
             "  AND NOT EXISTS ("
-            "    SELECT 1 FROM blacklisted_games bg "
-            "    WHERE bg.server_guild_id = ur.server_guild_id "
+            "    SELECT 1 FROM record_global_blacklisted_games bg "
+            "    WHERE 1=1 "
             "      AND bg.game_name       = ur.game_name"
             "  )"
         )
