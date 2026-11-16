@@ -53,8 +53,12 @@ def test_retired_admin_slash_commands_are_not_registered():
 def test_retained_admin_slash_commands_still_exist():
     assert "listar" in command_names("cogs/backup.py")
     assert "listar" in command_names("cogs/forms.py")
-    # The web permission-copy tool must exist before /migrate permissoes canais is retired.
-    assert "canais" in command_names("cogs/backup.py")
+    # Permissions copying is available in Coddy → Ferramentas on the website.
+    # The nested slash group is no longer registered at startup.
+    assert "canais" not in command_names("cogs/backup.py")
+    source = (ROOT / "cogs/backup.py").read_text(encoding="utf-8")
+    assert 'app_commands.Group(name="migrate"' not in source
+    assert 'migrate_permissions' not in source
     assert {"config", "ajustar"}.issubset(command_names("cogs/xp.py"))
 
 
