@@ -189,3 +189,26 @@ def test_recovery_only_restores_members_in_selected_persisted_role(monkeypatch):
             ))
         assert runtime._assign_members.await_count == 1
     asyncio.run(scenario())
+
+
+def test_worker_stops_if_operation_is_no_longer_running(monkeypatch):
+    from contextlib import asynccontextmanager
+
+    class FakeCursor:
+        rowcount = 0
+
+        async def execute(self, sql, args):
+            assert "status='RUNNING'" in sql
+
+    @asynccontextmanager
+    async def fake_connection():
+        yield FakeCursor()
+
+    async def scenario():
+        monkeypatch.setattr(module, "role_tool_connection", fake_connection)
+        with pytest.raises(RoleToolRuntimeError, match="JOB_NOT_RUNNING"):
+            await RoleToolRuntime._progress(
+                job(), current=25, total=100,
+                added=20, skipped=5, failed=0,
+            )
+    asyncio.run(scenario())
