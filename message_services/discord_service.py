@@ -1397,10 +1397,6 @@ async def bumpReward():
     await run_monthly_reward_cycle(bot)
 
 
-@bot.tree.command(name=f'testes', description=f'teste')
-async def test(ctx: discord.Interaction):
-    pass
-
 def run_discord_client(chatBot):
     global status_api, community_lifecycle_client
     bot.chatBot = chatBot

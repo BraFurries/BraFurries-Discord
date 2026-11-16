@@ -9,7 +9,6 @@ from discord.ext import commands
 import discord
 
 from core.database import (
-    admConnectTelegramAccount,
     setServerMessage,
     getConfig,
     updateServerConfig,
@@ -21,8 +20,6 @@ from core.database import (
     getVipRoleDivisionConfig,
     getVipRolesConfig,
     getVipCustomRolePrefixConfig,
-    getGuildStaffColors,
-    setGuildStaffColors,
     getBirthdayMessageChannelId,
     setBirthdayMessageChannelId,
     getCollaborativeModerationConfig,
@@ -539,23 +536,6 @@ class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         super().__init__()
-
-    @admin.command(name="conectar_conta", description="Conecta sua conta do discord com a do telegram")
-    async def connectAccount(self, ctx: Interaction, user: Member, telegram_username: str):
-        await ctx.response.defer()
-        result = admConnectTelegramAccount(ctx.guild.id, user, telegram_username)
-        if result:
-            return await ctx.followup.send(
-                content=(
-                    'Sua conta foi conectada com sucesso! agora você pode usar os comandos do bot no discord e no telegram'
-                ),
-                ephemeral=False,
-            )
-        else:
-            return await ctx.followup.send(
-                content='Não foi possível conectar sua conta! você já está conectado?',
-                ephemeral=True,
-            )
 
     @admin.command(name="mensagens_servidor", description="Configure as mensagens especificas do servidor")
     async def changeMessages(self, ctx: Interaction, tipo: ServerMessages, mensagem: str):
@@ -1204,37 +1184,6 @@ class AdminCog(commands.Cog):
             ephemeral=True,
         )
 
-    @admin.command(name="cores_staff", description="Exibe ou define as cores reservadas da staff (hex)")
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(cores="Lista separada por vírgula (#RRGGBB). Use 'limpar' para remover todas.")
-    async def staff_colors(self, ctx: Interaction, cores: str | None = None):
-        if not isinstance(ctx.user, discord.Member) or not ctx.user.guild_permissions.administrator:
-            return await ctx.response.send_message(
-                content='Apenas administradores podem alterar essa configuração.',
-                ephemeral=True,
-            )
-
-        if cores is not None:
-            normalized = cores.strip()
-            if normalized.lower() in {"limpar", "clear", "none", "0"}:
-                parsed_colors: list[str] = []
-            else:
-                parsed_colors = [part.strip() for part in normalized.split(",") if part.strip()]
-
-            updated = setGuildStaffColors(ctx.guild_id, parsed_colors)
-            if not updated:
-                return await ctx.response.send_message(
-                    content='Não foi possível salvar as cores da staff.',
-                    ephemeral=True,
-                )
-
-        configured_colors = getGuildStaffColors(ctx.guild_id)
-        display = ", ".join(configured_colors) if configured_colors else "nenhuma"
-        await ctx.response.send_message(
-            content=f'🎨 Cores reservadas da staff: {display}',
-            ephemeral=True,
-        )
-
     def _staff_guard(self, ctx: Interaction) -> bool:
         if ctx.guild is None or not isinstance(ctx.user, discord.Member):
             return False
@@ -1829,34 +1778,6 @@ class AdminCog(commands.Cog):
             ),
             ephemeral=True,
         )
-
-    @admin.command(
-        name='atualizar-comandos',
-        description='Força a atualização dos comandos do bot',
-    )
-    async def updateCommands(self, ctx: Interaction):
-        await ctx.response.defer(ephemeral=True)
-
-        staff_roles = getStaffRoles(ctx.guild)
-        if not any(role in ctx.user.roles for role in staff_roles):
-            return await ctx.followup.send(
-                content='Você não tem permissão para atualizar os comandos.',
-                ephemeral=True,
-            )
-
-        try:
-            synced = await self.bot.tree.sync()
-        except Exception as error:
-            return await ctx.followup.send(
-                content=f'Não foi possível sincronizar os comandos: {error}',
-                ephemeral=True,
-            )
-
-        await ctx.followup.send(
-            content=f'{len(synced)} comandos sincronizados com sucesso!',
-            ephemeral=True,
-        )
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))

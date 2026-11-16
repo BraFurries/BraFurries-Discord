@@ -288,16 +288,6 @@ async def colorIsAvailable(color:str, guild: discord.Guild):
 
     staff_colors: list[str] = []
 
-    configured_staff_colors = getGuildStaffColors(guild.id)
-    for configured_color in configured_staff_colors:
-        normalized = str(configured_color).strip().lower()
-        if not normalized:
-            continue
-        if not normalized.startswith("#"):
-            normalized = f"#{normalized}"
-        if re.fullmatch(r"#[0-9a-f]{6}", normalized) and normalized not in staff_colors:
-            staff_colors.append(normalized)
-
     staff_role_ids = getStaffRoles(guild.id)
     for role_id in staff_role_ids:
         role = guild.get_role(int(role_id))
