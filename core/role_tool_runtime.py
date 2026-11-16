@@ -61,8 +61,11 @@ class RoleToolRuntime:
                           operation_type, role_id, channel_id, source_bot,
                           source_operation_id, role_key, preview_fingerprint,
                           expected_count, progress_current, status
-                   FROM guild_role_tool_operations
-                   WHERE id=%s AND guild_id=%s""",
+                   FROM guild_role_tool_operations o
+                   JOIN community_discord cd
+                     ON cd.guild_id=o.guild_id AND cd.community_id=o.community_id
+                    AND cd.active=1
+                   WHERE o.id=%s AND o.guild_id=%s""",
                 (operation_id, guild_id),
             )
             return await cur.fetchone()
@@ -276,6 +279,9 @@ class RoleToolRuntime:
                         current += 1
                         now = time.monotonic()
                         if current == total or (current % 25 == 0 and now - last_update >= 2):
+                            _require_bulk_role_access(
+                                guild, job["actor_discord_user_id"], role.id
+                            )
                             last_update = now
                             await self._progress(job, current=current, total=total,
                                 added=added, skipped=skipped, failed=failed)
