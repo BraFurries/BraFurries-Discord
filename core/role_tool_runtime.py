@@ -89,7 +89,7 @@ class RoleToolRuntime:
         async with role_tool_connection() as cur:
             await cur.execute(
                 """UPDATE guild_role_tool_operations
-                   SET status='RUNNING', started_at=UTC_TIMESTAMP(6)
+                   SET status='RUNNING', started_at=CURRENT_TIMESTAMP(6)
                    WHERE id=%s AND guild_id=%s AND community_id=%s
                      AND status='PENDING'""",
                 (job["id"], job["guild_id"], job["community_id"]),
@@ -126,7 +126,7 @@ class RoleToolRuntime:
                    SET status=%s, progress_current=%s, progress_total=%s,
                        added_count=%s, skipped_count=%s, failed_count=%s,
                        scanned_count=%s, result_json=%s, error_code=%s,
-                       finished_at=UTC_TIMESTAMP(6)
+                       finished_at=CURRENT_TIMESTAMP(6)
                    WHERE id=%s AND guild_id=%s AND community_id=%s AND status='RUNNING'""",
                 (status, current, total, added, skipped, failed, scanned, body, error,
                  job["id"], job["guild_id"], job["community_id"]),
@@ -177,7 +177,7 @@ class RoleToolRuntime:
             async with role_tool_connection() as cur:
                 await cur.execute(
                     """UPDATE guild_role_tool_operations
-                       SET updated_at=UTC_TIMESTAMP(6)
+                       SET updated_at=CURRENT_TIMESTAMP(6)
                        WHERE id=%s AND guild_id=%s AND status='RUNNING'""",
                     (job["id"], job["guild_id"]),
                 )
