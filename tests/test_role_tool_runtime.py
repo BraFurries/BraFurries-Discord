@@ -114,3 +114,78 @@ def test_failed_discord_role_assignment_is_counted_without_retrying_successes(mo
         assert runtime._complete.await_args.args[1] == "PARTIAL"
         assert runtime._complete.await_args.kwargs["failed"] == 1
     asyncio.run(scenario())
+
+
+def test_scan_uses_existing_import_parser_and_persists_complete_snapshot(monkeypatch):
+    class FakeChannel:
+        id = 300
+
+        async def history(self, **kwargs):
+            assert kwargs == {"limit": None, "oldest_first": True}
+            for id in range(3):
+                yield SimpleNamespace(id=id)
+
+    async def scenario():
+        parser = Mock()
+        parser._normalize_role_name.side_effect = str.casefold
+        parser._is_message_from_selected_bot.side_effect = lambda message, *_: message.id != 1
+
+        def process(bot_name, message, roles_by_id, roles_by_name, entries):
+            assert bot_name == "Dyno"
+            entries["id:555"] = SimpleNamespace(
+                display_name="Cargo legado",
+                role_id_from_log=555,
+                server_role=None,
+                member_ids={101, 202},
+                is_name_ambiguous=False,
+            )
+            return None
+
+        parser._process_recovery_message.side_effect = process
+        monkeypatch.setattr(module.discord, "TextChannel", FakeChannel)
+        runtime = RoleToolRuntime(Mock(get_cog=lambda name: parser if name == "Import" else None))
+        runtime._complete = AsyncMock()
+        g = SimpleNamespace(
+            id=88, roles=[], get_channel=lambda channel_id: FakeChannel() if channel_id == 300 else None
+        )
+        await runtime._run_scan(g, job(
+            operation_type="RECOVERY_SCAN", source_bot="Dyno", channel_id=300,
+        ))
+        args = runtime._complete.await_args
+        assert args.args[1] == "READY"
+        assert args.kwargs["scanned"] == 3
+        result = args.kwargs["result"]
+        assert result["botMessagesFound"] == 2
+        assert result["roleEntries"][0]["memberIds"] == [101, 202]
+        assert result["roleEntries"][0]["foundRoleId"] is None
+        assert parser._process_recovery_message.call_count == 2
+    asyncio.run(scenario())
+
+
+def test_recovery_only_restores_members_in_selected_persisted_role(monkeypatch):
+    async def scenario():
+        runtime = RoleToolRuntime(Mock())
+        source = {
+            "roleEntries": [
+                {"key": "id:123", "memberIds": [3, 5]},
+                {"key": "id:456", "memberIds": [99]},
+            ]
+        }
+        role = SimpleNamespace(id=555)
+        runtime._read_source = AsyncMock(return_value=source)
+        runtime._assign_members = AsyncMock()
+        monkeypatch.setattr(module, "_require_bulk_role_access", lambda *args: role)
+        await runtime._run_recovery(SimpleNamespace(id=88), job(
+            operation_type="RECOVERY_APPLY", role_key="id:123",
+            source_operation_id=7, expected_count=2,
+        ))
+        assert runtime._assign_members.await_args.args[3] == [3, 5]
+        assert runtime._assign_members.await_args.kwargs["allow_missing"] is True
+
+        with pytest.raises(RoleToolRuntimeError, match="ROLE_NOT_FOUND_IN_SCAN"):
+            await runtime._run_recovery(SimpleNamespace(id=88), job(
+                operation_type="RECOVERY_APPLY", role_key="id:789",
+                source_operation_id=7, expected_count=2,
+            ))
+        assert runtime._assign_members.await_count == 1
+    asyncio.run(scenario())
