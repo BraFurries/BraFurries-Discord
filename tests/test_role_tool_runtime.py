@@ -212,3 +212,74 @@ def test_worker_stops_if_operation_is_no_longer_running(monkeypatch):
                 added=20, skipped=5, failed=0,
             )
     asyncio.run(scenario())
+
+
+def test_parallel_role_workers_stop_before_operation_can_be_finalized(monkeypatch):
+    async def scenario():
+        runtime = RoleToolRuntime(Mock())
+        role = SimpleNamespace(id=555)
+        monkeypatch.setattr(module, "_require_bulk_role_access", lambda *args: role)
+        second_started = asyncio.Event()
+        second_cancelled = asyncio.Event()
+        leaked = []
+
+        async def first_assignment(*args, **kwargs):
+            await second_started.wait()
+            raise RuntimeError("unexpected_discord_runtime_failure")
+
+        async def second_assignment(*args, **kwargs):
+            second_started.set()
+            try:
+                await asyncio.sleep(0.5)
+                leaked.append("role_was_assigned_after_failure")
+            except asyncio.CancelledError:
+                second_cancelled.set()
+                raise
+
+        first = SimpleNamespace(id=1, bot=False, roles=[], add_roles=first_assignment)
+        second = SimpleNamespace(id=2, bot=False, roles=[], add_roles=second_assignment)
+        guild = SimpleNamespace(
+            get_member=lambda uid: {1: first, 2: second}.get(uid)
+        )
+        runtime._progress = AsyncMock()
+        runtime._complete = AsyncMock()
+        with pytest.raises(ExceptionGroup):
+            await runtime._assign_members(
+                guild, job(), role, [1, 2], allow_missing=False
+            )
+        assert second_started.is_set()
+        assert second_cancelled.is_set()
+        assert leaked == []
+        runtime._complete.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+def test_interrupted_mutating_job_never_reports_no_effects(monkeypatch):
+    async def scenario():
+        runtime = RoleToolRuntime(Mock())
+        runtime._complete = AsyncMock()
+        class Cursor:
+            execute = AsyncMock()
+            fetchone = AsyncMock(return_value={
+                "added_count": 0, "progress_current": 0,
+                "progress_total": 3, "skipped_count": 0,
+                "failed_count": 0, "scanned_count": 0,
+            })
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def connection():
+            yield Cursor()
+
+        monkeypatch.setattr(module, "role_tool_connection", connection)
+        await runtime._mark_interrupted(job(), "WORKER_INTERRUPTED")
+        assert runtime._complete.await_args.args[1] == "PARTIAL"
+
+        runtime._complete.reset_mock()
+        await runtime._mark_interrupted(
+            job(operation_type="RECOVERY_SCAN"), "WORKER_INTERRUPTED"
+        )
+        assert runtime._complete.await_args.args[1] == "FAILED"
+
+    asyncio.run(scenario())
