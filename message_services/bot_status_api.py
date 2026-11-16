@@ -19,6 +19,7 @@ from core.backup_runtime import BackupBusyError, BackupRestoreEngine
 from core.theme_runtime import ThemeRuntime
 from core.guild_management import apply_guild_operation, build_guild_resources, build_structure_preview, can_manage_guild
 from core.bulk_role_assignment import BulkRolePreviewError, build_bulk_role_preview
+from core.role_tool_runtime import RoleToolRuntime, RoleToolRuntimeError
 from core.channel_permission_copy import (
     ChannelPermissionConflict, validate_channel_permission_copy,
     build_channel_permission_copy_preview, apply_channel_permission_copy,
@@ -137,6 +138,7 @@ class BotStatusApi:
         self._handlers_added_by_api: list[tuple[logging.Logger, logging.Handler]] = []
         self._owned_access_stream_handler: logging.StreamHandler | None = None
         self._backup_runtime = BackupRestoreEngine(bot)
+        self._role_tool_runtime = RoleToolRuntime(bot)
         self._theme_runtime = ThemeRuntime(bot)
         self._background_tasks: set[asyncio.Task] = set()
 
@@ -358,6 +360,43 @@ class BotStatusApi:
         if error is not None:
             return error
         return web.json_response(build_guild_resources(guild))
+
+    async def _handle_role_tool_access(self, request: web.Request) -> web.Response:
+        if not self.token:
+            return web.json_response({'error': 'operation_auth_not_configured'}, status=503)
+        guild, error = self._authorized_guild(request)
+        if error is not None:
+            return error
+        try:
+            actor_id = int(request.match_info['discord_user_id'])
+            self._role_tool_runtime._authorized_admin(guild, actor_id)
+        except PermissionError:
+            return web.json_response({'error': 'role_tool_requires_administrator'}, status=403)
+        except (ValueError, KeyError):
+            return web.json_response({'error': 'invalid_identifier'}, status=422)
+        return web.json_response({'guildId': str(guild.id),
+                                  'actorDiscordUserId': str(actor_id),
+                                  'administrator': True})
+
+    async def _handle_role_tool_dispatch(self, request: web.Request) -> web.Response:
+        if not self.token:
+            return web.json_response({'error': 'operation_auth_not_configured'}, status=503)
+        guild, error = self._authorized_guild(request)
+        if error is not None:
+            return error
+        try:
+            operation_id = int(request.match_info['operation_id'])
+            actor_id = int(request.match_info['discord_user_id'])
+            if operation_id <= 0 or actor_id <= 0:
+                raise ValueError("invalid_identifiers")
+            result = await self._role_tool_runtime.dispatch(guild, actor_id, operation_id)
+        except PermissionError as exc:
+            return web.json_response({'error': str(exc)}, status=403)
+        except (RoleToolRuntimeError, BulkRolePreviewError) as exc:
+            return web.json_response({'error': str(exc)}, status=409)
+        except (ValueError, TypeError, KeyError):
+            return web.json_response({'error': 'invalid_role_operation'}, status=422)
+        return web.json_response(result, status=202)
 
     async def _handle_bulk_role_preview(self, request: web.Request) -> web.Response:
         # New tools require a configured internal Bearer token even for previews.
@@ -1347,6 +1386,8 @@ class BotStatusApi:
         app.router.add_get('/guilds/{guild_id}/members/{discord_user_id}', self._handle_member_state)
         app.router.add_get('/guilds/{guild_id}/resources/{discord_user_id}', self._handle_guild_resources)
         app.router.add_get('/guilds/{guild_id}/roles/{role_id}/bulk-preview/{discord_user_id}', self._handle_bulk_role_preview)
+        app.router.add_get('/guilds/{guild_id}/role-tools/access/{discord_user_id}', self._handle_role_tool_access)
+        app.router.add_post('/guilds/{guild_id}/role-tools/{operation_id}/dispatch/{discord_user_id}', self._handle_role_tool_dispatch)
         app.router.add_post('/guilds/{guild_id}/structure-preview/{discord_user_id}', self._handle_structure_preview)
         app.router.add_post('/guilds/{guild_id}/xp/simulation/{discord_user_id}', self._handle_xp_simulation)
         app.router.add_post('/guilds/{guild_id}/xp/runtime-refresh/{discord_user_id}', self._handle_xp_runtime_refresh)
@@ -1398,6 +1439,13 @@ class BotStatusApi:
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
             self._background_tasks.clear()
+            # Role operations are independent tasks; cancel and finalize any
+            # worker still running so the DB does not remain permanently locked.
+            role_tasks = list(self._role_tool_runtime.tasks.values())
+            for role_task in role_tasks:
+                role_task.cancel()
+            if role_tasks:
+                await asyncio.gather(*role_tasks, return_exceptions=True)
             self._detach_log_handler()
             self._runner = None
             self._site = None
