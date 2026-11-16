@@ -51,7 +51,7 @@ class RecordsCog(commands.Cog):
         if existing_load is None:
             async def _load_games() -> set[str]:
                 games = await asyncio.to_thread(getBlacklistedGames, guild_id)
-                return set(games)
+                return {name.casefold() for name in games}
 
             existing_load = asyncio.create_task(_load_games())
             self._blacklist_loads[guild_id] = existing_load
@@ -464,7 +464,7 @@ class RecordsCog(commands.Cog):
             self._open_voice_interval(after.channel.id, member.id, current_time)
             self.voice_session_starts.setdefault(member_key, current_time)
             game_name = next((a.name for a in member.activities if a.type == discord.ActivityType.playing), None)
-            if game_name and game_name not in guild_blacklist:
+            if game_name and game_name.casefold() not in guild_blacklist:
                 self.game_sessions[member_key] = (current_time, game_name)
             await self._refresh_call_log(member.guild, after.channel.id)
         # Member left voice channel
@@ -507,9 +507,9 @@ class RecordsCog(commands.Cog):
             return
 
         guild_blacklist = await self._get_blacklisted_games(after.guild.id)
-        if before_game in guild_blacklist:
+        if before_game and before_game.casefold() in guild_blacklist:
             before_game = None
-        if after_game in guild_blacklist:
+        if after_game and after_game.casefold() in guild_blacklist:
             after_game = None
         in_voice = after.voice and after.voice.channel is not None
         member_key = (after.guild.id, after.id)
@@ -547,7 +547,7 @@ class RecordsCog(commands.Cog):
             member = guild.get_member(user_id)
             if member is None or member.bot:
                 continue
-            if game_name in await self._get_blacklisted_games(guild_id):
+            if game_name.casefold() in await self._get_blacklisted_games(guild_id):
                 continue
             seconds = int((now() - start).total_seconds())
             if seconds > 0:

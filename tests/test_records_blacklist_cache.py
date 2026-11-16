@@ -16,11 +16,11 @@ async def test_blacklist_cache_reloads_after_admin_edits_without_restart(monkeyp
     cog._blacklist_ttl_seconds = 10.0
     cog._blacklist_loads = {}
 
-    assert await cog._get_blacklisted_games(123) == {"Jogo antigo"}
+    assert await cog._get_blacklisted_games(123) == {"jogo antigo"}
     current.append("Jogo novo")
-    assert await cog._get_blacklisted_games(123) == {"Jogo antigo"}
+    assert await cog._get_blacklisted_games(123) == {"jogo antigo"}
     clock[0] = 111.0
-    assert await cog._get_blacklisted_games(123) == {"Jogo antigo", "Jogo novo"}
+    assert await cog._get_blacklisted_games(123) == {"jogo antigo", "jogo novo"}
     assert db.call_count == 2
 
 @pytest.mark.asyncio
@@ -32,6 +32,6 @@ async def test_blacklist_cache_is_isolated_per_guild(monkeypatch):
     cog._blacklist_refreshed_at = {}
     cog._blacklist_ttl_seconds = 10.0
     cog._blacklist_loads = {}
-    assert await cog._get_blacklisted_games(1) == {"Jogo 1"}
-    assert await cog._get_blacklisted_games(2) == {"Jogo 2"}
+    assert await cog._get_blacklisted_games(1) == {"jogo 1"}
+    assert await cog._get_blacklisted_games(2) == {"jogo 2"}
     assert db.call_count == 2

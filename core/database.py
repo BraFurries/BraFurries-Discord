@@ -8060,8 +8060,7 @@ def getProfileData(
             "       AND NOT EXISTS ("
             "         SELECT 1"
             "           FROM record_global_blacklisted_games bg2"
-            "          WHERE 1=1"
-            "            AND bg2.game_name     = u2.game_name"
+            "          WHERE bg2.game_name     = u2.game_name"
             "       )"
             ") AS rank "
             "FROM user_records ur "
@@ -8069,8 +8068,7 @@ def getProfileData(
             "  AND ur.user_id        = %s "
             "  AND NOT EXISTS ("
             "    SELECT 1 FROM record_global_blacklisted_games bg "
-            "    WHERE 1=1 "
-            "      AND bg.game_name       = ur.game_name"
+            "    WHERE bg.game_name       = ur.game_name"
             "  )"
         )
         cursor.execute(game_sql, (guild_id, user_id))
