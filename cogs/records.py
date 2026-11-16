@@ -30,40 +30,51 @@ class RecordsCog(commands.Cog):
         self.call_log_messages: dict[int, int] = {}
         self.voice_session_starts: dict[tuple[int, int], datetime] = {}
         self.game_sessions: dict[tuple[int, int], tuple[datetime, str]] = {}
-        self.blacklisted_games_by_guild: dict[int, set[str]] = {}
-        # API administrative edits are authoritative; refresh the legacy runtime
-        # cache periodically instead of keeping an unbounded stale snapshot.
-        self._blacklist_refreshed_at: dict[int, float] = {}
+        # One platform-wide policy, shared by every guild. Coalesce concurrent
+        # refreshes so presence events don't multiply identical database reads.
+        self.blacklisted_games_global: set[str] | None = None
+        self._blacklist_refreshed_at = 0.0
         self._blacklist_ttl_seconds = 10.0
-        self._blacklist_loads: dict[int, asyncio.Task[set[str]]] = {}
+        self._blacklist_load: asyncio.Task[set[str]] | None = None
         super().__init__()
         self.save_records.start()
 
     async def _get_blacklisted_games(self, guild_id: int) -> set[str]:
-        cached = self.blacklisted_games_by_guild.get(guild_id)
+        cached = self.blacklisted_games_global
         if cached is not None and (
-            time.monotonic() - self._blacklist_refreshed_at.get(guild_id, 0.0)
+            time.monotonic() - self._blacklist_refreshed_at
             < self._blacklist_ttl_seconds
         ):
             return cached
 
-        existing_load = self._blacklist_loads.get(guild_id)
-        if existing_load is None:
+        task = self._blacklist_load
+        if task is None:
             async def _load_games() -> set[str]:
+                # guild_id remains only for the legacy database function signature.
                 games = await asyncio.to_thread(getBlacklistedGames, guild_id)
                 return {name.casefold() for name in games}
 
-            existing_load = asyncio.create_task(_load_games())
-            self._blacklist_loads[guild_id] = existing_load
+            task = asyncio.create_task(_load_games())
+            self._blacklist_load = task
 
         try:
-            loaded_games = await asyncio.shield(existing_load)
-        finally:
-            self._blacklist_loads.pop(guild_id, None)
+            loaded_games = await asyncio.shield(task)
+        except BaseException:
+            if task.done() and self._blacklist_load is task:
+                self._blacklist_load = None
+            raise
 
-        self.blacklisted_games_by_guild[guild_id] = loaded_games
-        self._blacklist_refreshed_at[guild_id] = time.monotonic()
-        return loaded_games
+        if self._blacklist_load is task:
+            self._blacklist_load = None
+            # A newly blocked game must not resume counting an old session if
+            # administrators later remove it from the blacklist.
+            for session_key, (_, game_name) in list(self.game_sessions.items()):
+                if game_name.casefold() in loaded_games:
+                    self.game_sessions.pop(session_key, None)
+            self.blacklisted_games_global = loaded_games
+            self._blacklist_refreshed_at = time.monotonic()
+
+        return self.blacklisted_games_global
 
     def _open_voice_interval(self, channel_id: int, user_id: int, started_at: datetime):
         channel_logs = self.call_logs.setdefault(channel_id, {})
