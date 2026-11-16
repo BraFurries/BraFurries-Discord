@@ -109,6 +109,8 @@ class RoleToolRuntime:
                 (current, total, added, skipped, failed, scanned,
                  job["id"], job["guild_id"]),
             )
+            if cur.rowcount != 1:
+                raise RoleToolRuntimeError("JOB_NOT_RUNNING")
 
     @staticmethod
     async def _complete(job: dict, status: str, *, current: int = 0,
