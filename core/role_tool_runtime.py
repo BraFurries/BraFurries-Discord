@@ -17,7 +17,16 @@ import discord
 from core.bulk_role_assignment import (
     BulkRolePreviewError, _require_bulk_role_access, build_bulk_role_preview,
 )
-from core.database import async_pooled_connection
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def role_tool_connection():
+    # The database module creates a synchronous pool at import time. Importing
+    # it during HTTP app/test collection would require a live MariaDB.
+    from core.database import async_pooled_connection
+    async with async_pooled_connection() as cursor:
+        yield cursor
 
 logger = logging.getLogger(__name__)
 SOURCE_BOT_IDS = {
@@ -46,7 +55,7 @@ class RoleToolRuntime:
 
     @staticmethod
     async def _read_job(guild_id: int, operation_id: int) -> dict | None:
-        async with async_pooled_connection() as cur:
+        async with role_tool_connection() as cur:
             await cur.execute(
                 """SELECT id, guild_id, community_id, actor_user_id, actor_discord_user_id,
                           operation_type, role_id, channel_id, source_bot,
@@ -60,7 +69,7 @@ class RoleToolRuntime:
 
     @staticmethod
     async def _read_source(job: dict) -> dict:
-        async with async_pooled_connection() as cur:
+        async with role_tool_connection() as cur:
             await cur.execute(
                 """SELECT result_json FROM guild_role_tool_operations
                    WHERE id=%s AND guild_id=%s AND community_id=%s
@@ -74,7 +83,7 @@ class RoleToolRuntime:
 
     @staticmethod
     async def _claim(job: dict) -> bool:
-        async with async_pooled_connection() as cur:
+        async with role_tool_connection() as cur:
             await cur.execute(
                 """UPDATE guild_role_tool_operations
                    SET status='RUNNING', started_at=UTC_TIMESTAMP(6)
@@ -88,7 +97,7 @@ class RoleToolRuntime:
     async def _progress(job: dict, *, current: int, total: int,
                         added: int, skipped: int, failed: int,
                         scanned: int = 0) -> None:
-        async with async_pooled_connection() as cur:
+        async with role_tool_connection() as cur:
             await cur.execute(
                 """UPDATE guild_role_tool_operations
                    SET progress_current=%s, progress_total=%s, added_count=%s,
@@ -106,7 +115,7 @@ class RoleToolRuntime:
         if status not in {"READY", "SUCCEEDED", "PARTIAL", "FAILED"}:
             raise ValueError("invalid_final_status")
         body = json.dumps(result, ensure_ascii=False, separators=(",", ":")) if result is not None else None
-        async with async_pooled_connection() as cur:
+        async with role_tool_connection() as cur:
             await cur.execute(
                 """UPDATE guild_role_tool_operations
                    SET status=%s, progress_current=%s, progress_total=%s,
@@ -160,7 +169,7 @@ class RoleToolRuntime:
     async def _heartbeat(job: dict) -> None:
         while True:
             await asyncio.sleep(15)
-            async with async_pooled_connection() as cur:
+            async with role_tool_connection() as cur:
                 await cur.execute(
                     """UPDATE guild_role_tool_operations
                        SET updated_at=UTC_TIMESTAMP(6)
@@ -205,7 +214,7 @@ class RoleToolRuntime:
             await asyncio.gather(heartbeat, return_exceptions=True)
 
     async def _mark_interrupted(self, job: dict, error: str) -> None:
-        async with async_pooled_connection() as cur:
+        async with role_tool_connection() as cur:
             await cur.execute(
                 """SELECT progress_current, progress_total, added_count,
                           skipped_count, failed_count, scanned_count
