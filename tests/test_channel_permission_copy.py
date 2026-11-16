@@ -30,20 +30,29 @@ class Channel:
         self.guild, self.id, self.name, self.type = guild, channel_id, f"canal-{channel_id}", kind
         self.overwrites = dict(acl)
         self.edit = AsyncMock(side_effect=self._edit)
+        self.denied_member_ids = set()
 
     async def _edit(self, **kwargs):
         self.overwrites = dict(kwargs["overwrites"])
 
     def permissions_for(self, member):
-        return SimpleNamespace(manage_channels=member.guild_permissions.manage_channels)
+        return SimpleNamespace(
+            manage_channels=member.guild_permissions.manage_channels
+            and getattr(member, "id", None) not in self.denied_member_ids
+        )
 
 
 class Guild:
     def __init__(self):
         self.id, self.owner_id = 900, 1
         perms = SimpleNamespace(manage_guild=True, manage_channels=True, administrator=False)
-        self.members = {1: SimpleNamespace(guild_permissions=perms)}
-        self.me = SimpleNamespace(guild_permissions=perms)
+        self.members = {
+            1: SimpleNamespace(id=1, guild_permissions=perms),
+            2: SimpleNamespace(id=2, guild_permissions=SimpleNamespace(
+                manage_guild=True, manage_channels=True, administrator=False
+            )),
+        }
+        self.me = SimpleNamespace(id=99, guild_permissions=perms)
         principal = Principal(23, "staff")
         # Discord overwrite principals (roles/members) are hashable objects.
         self.source = Channel(self, 100, {principal: Overwrite(1024, 0)})
@@ -77,7 +86,12 @@ def test_preview_is_read_only_and_counts_both_acl_sets():
 def test_authorization_and_guild_isolation_fail_closed():
     guild = Guild()
     with pytest.raises(PermissionError):
+        validate_channel_permission_copy(guild, 3, payload())
+    guild.target.denied_member_ids.add(2)
+    with pytest.raises(PermissionError, match="efetiva"):
         validate_channel_permission_copy(guild, 2, payload())
+    guild.target.denied_member_ids.clear()
+    assert validate_channel_permission_copy(guild, 2, payload()) == (guild.source, guild.target)
     with pytest.raises(ValueError):
         validate_channel_permission_copy(guild, 1, payload(targetChannelId="300"))
     with pytest.raises(ValueError):

@@ -90,11 +90,25 @@ def validate_channel_permission_copy(
     # Guild-level permission is not sufficient when the bot is denied access
     # through channel overwrites. Check the effective target-channel rights.
     check = getattr(target, "permissions_for", None)
-    if callable(check) and not (
-        getattr(check(guild.me), "manage_channels", False)
-        or getattr(check(guild.me), "administrator", False)
-    ):
-        raise PermissionError("Coddy sem permissão efetiva no destino")
+    if callable(check):
+        bot_target_permissions = check(guild.me)
+        if not (
+            getattr(bot_target_permissions, "manage_channels", False)
+            or getattr(bot_target_permissions, "administrator", False)
+        ):
+            raise PermissionError("Coddy sem permissão efetiva no destino")
+        # Administrators and guild owners may bypass channel restrictions;
+        # a guild-level manage_channels role alone cannot bypass a local deny.
+        if not (
+            int(getattr(guild, "owner_id", 0)) == actor_id
+            or bool(getattr(member_perms, "administrator", False))
+        ):
+            actor_target_permissions = check(member)
+            if not (
+                getattr(actor_target_permissions, "manage_channels", False)
+                or getattr(actor_target_permissions, "administrator", False)
+            ):
+                raise PermissionError("Usuário sem permissão efetiva no destino")
     return source, target
 
 
