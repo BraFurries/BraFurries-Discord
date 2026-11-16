@@ -17,6 +17,7 @@ import discord
 from core.bulk_role_assignment import (
     BulkRolePreviewError, _require_bulk_role_access, build_bulk_role_preview,
 )
+from core.role_migration import build_role_migration_preview, require_role_migration_access
 from contextlib import asynccontextmanager
 
 
@@ -58,7 +59,7 @@ class RoleToolRuntime:
         async with role_tool_connection() as cur:
             await cur.execute(
                 """SELECT o.id, o.guild_id, o.community_id, o.actor_user_id, o.actor_discord_user_id,
-                          o.operation_type, o.role_id, o.channel_id, o.source_bot,
+                          o.operation_type, o.role_id, o.source_role_id, o.channel_id, o.source_bot,
                           o.source_operation_id, o.role_key, o.preview_fingerprint,
                           o.expected_count, o.progress_current, o.status
                    FROM guild_role_tool_operations o
@@ -99,14 +100,15 @@ class RoleToolRuntime:
     @staticmethod
     async def _progress(job: dict, *, current: int, total: int,
                         added: int, skipped: int, failed: int,
-                        scanned: int = 0) -> None:
+                        scanned: int = 0, removed: int = 0) -> None:
         async with role_tool_connection() as cur:
             await cur.execute(
                 """UPDATE guild_role_tool_operations
                    SET progress_current=%s, progress_total=%s, added_count=%s,
-                       skipped_count=%s, failed_count=%s, scanned_count=%s
+                       skipped_count=%s, failed_count=%s, scanned_count=%s,
+                       removed_count=%s
                    WHERE id=%s AND guild_id=%s AND status='RUNNING'""",
-                (current, total, added, skipped, failed, scanned,
+                (current, total, added, skipped, failed, scanned, removed,
                  job["id"], job["guild_id"]),
             )
             if cur.rowcount != 1:
@@ -115,7 +117,7 @@ class RoleToolRuntime:
     @staticmethod
     async def _complete(job: dict, status: str, *, current: int = 0,
                         total: int = 0, added: int = 0, skipped: int = 0,
-                        failed: int = 0, scanned: int = 0,
+                        failed: int = 0, scanned: int = 0, removed: int = 0,
                         result: dict | None = None, error: str | None = None) -> None:
         if status not in {"READY", "SUCCEEDED", "PARTIAL", "FAILED"}:
             raise ValueError("invalid_final_status")
@@ -125,10 +127,10 @@ class RoleToolRuntime:
                 """UPDATE guild_role_tool_operations
                    SET status=%s, progress_current=%s, progress_total=%s,
                        added_count=%s, skipped_count=%s, failed_count=%s,
-                       scanned_count=%s, result_json=%s, error_code=%s,
+                       scanned_count=%s, removed_count=%s, result_json=%s, error_code=%s,
                        finished_at=CURRENT_TIMESTAMP(6)
                    WHERE id=%s AND guild_id=%s AND community_id=%s AND status='RUNNING'""",
-                (status, current, total, added, skipped, failed, scanned, body, error,
+                (status, current, total, added, skipped, failed, scanned, removed, body, error,
                  job["id"], job["guild_id"], job["community_id"]),
             )
             if cur.rowcount == 1:
@@ -198,6 +200,11 @@ class RoleToolRuntime:
             self._authorized_admin(guild, job["actor_discord_user_id"])
             if job["operation_type"] in ("BULK_ADD", "RECOVERY_APPLY"):
                 _require_bulk_role_access(guild, job["actor_discord_user_id"], int(job["role_id"]))
+            elif job["operation_type"] == "ROLE_MIGRATE":
+                require_role_migration_access(
+                    guild, job["actor_discord_user_id"],
+                    int(job["source_role_id"]), int(job["role_id"])
+                )
             elif job["operation_type"] == "RECOVERY_SCAN":
                 channel = guild.get_channel(int(job["channel_id"]))
                 if not isinstance(channel, discord.TextChannel):
@@ -210,6 +217,8 @@ class RoleToolRuntime:
                 raise RoleToolRuntimeError("UNSUPPORTED_OPERATION")
             if job["operation_type"] == "BULK_ADD":
                 await self._run_bulk(guild, job)
+            elif job["operation_type"] == "ROLE_MIGRATE":
+                await self._run_migration(guild, job)
             elif job["operation_type"] == "RECOVERY_SCAN":
                 await self._run_scan(guild, job)
             else:
@@ -230,7 +239,7 @@ class RoleToolRuntime:
         async with role_tool_connection() as cur:
             await cur.execute(
                 """SELECT progress_current, progress_total, added_count,
-                          skipped_count, failed_count, scanned_count
+                          skipped_count, failed_count, scanned_count, removed_count
                    FROM guild_role_tool_operations
                    WHERE id=%s AND guild_id=%s""",
                 (job["id"], job["guild_id"]),
@@ -239,13 +248,15 @@ class RoleToolRuntime:
         added = int(r.get("added_count") or 0)
         # A failed/cancelled write job may already have mutated Discord roles
         # beyond the last persisted checkpoint. Never claim zero side effects.
-        maybe_changed = job["operation_type"] in {"BULK_ADD", "RECOVERY_APPLY"}
-        await self._complete(job, "PARTIAL" if added or maybe_changed else "FAILED",
+        removed = int(r.get("removed_count") or 0)
+        maybe_changed = job["operation_type"] in {"BULK_ADD", "RECOVERY_APPLY", "ROLE_MIGRATE"}
+        await self._complete(job, "PARTIAL" if added or removed or maybe_changed else "FAILED",
                              current=int(r.get("progress_current") or 0),
                              total=int(r.get("progress_total") or 0),
                              added=added, skipped=int(r.get("skipped_count") or 0),
                              failed=int(r.get("failed_count") or 0),
-                             scanned=int(r.get("scanned_count") or 0), error=error)
+                             scanned=int(r.get("scanned_count") or 0),
+                             removed=removed, error=error)
 
     async def _assign_members(self, guild: discord.Guild, job: dict,
                               role: discord.Role, member_ids: list[int],
@@ -326,6 +337,75 @@ class RoleToolRuntime:
             if not member.bot and role not in member.roles
         ]
         await self._assign_members(guild, job, role, member_ids, allow_missing=False)
+
+    async def _run_migration(self, guild: discord.Guild, job: dict) -> None:
+        actor_id = int(job["actor_discord_user_id"])
+        source_id = int(job["source_role_id"])
+        destination_id = int(job["role_id"])
+        source, destination = require_role_migration_access(
+            guild, actor_id, source_id, destination_id
+        )
+        if not guild.chunked:
+            await asyncio.wait_for(guild.chunk(cache=True), timeout=30)
+        preview = build_role_migration_preview(guild, actor_id, source_id, destination_id)
+        if preview["fingerprint"] != job["preview_fingerprint"]:
+            raise RoleToolRuntimeError("MIGRATION_PREVIEW_CHANGED")
+        if preview["sourceMembers"] != job["expected_count"]:
+            raise RoleToolRuntimeError("MIGRATION_MEMBER_COUNT_CHANGED")
+
+        member_ids = [
+            member.id for member in sorted(guild.members, key=lambda m: m.id)
+            if not member.bot and source in member.roles
+        ]
+        added = removed = skipped = failed = 0
+        total = len(member_ids)
+        last_update = time.monotonic()
+
+        # Deliberately process sequentially: removing the original role before
+        # the destination was successfully added would revoke user access.
+        for index, member_id in enumerate(member_ids, start=1):
+            require_role_migration_access(guild, actor_id, source_id, destination_id)
+            member = guild.get_member(member_id)
+            if member is None or member.bot or source not in member.roles:
+                skipped += 1
+            else:
+                if destination not in member.roles:
+                    try:
+                        await member.add_roles(
+                            destination, reason=f"BraFurries painel: migração {job['id']}"
+                        )
+                        added += 1
+                    except (discord.Forbidden, discord.HTTPException):
+                        failed += 1
+                        # Safety invariant: never remove source when add failed.
+                        continue_removal = False
+                    else:
+                        continue_removal = True
+                else:
+                    continue_removal = True
+                if continue_removal:
+                    # Revalidate permissions if they changed during the add.
+                    require_role_migration_access(guild, actor_id, source_id, destination_id)
+                    try:
+                        await member.remove_roles(
+                            source, reason=f"BraFurries painel: migração {job['id']}"
+                        )
+                        removed += 1
+                    except (discord.Forbidden, discord.HTTPException):
+                        failed += 1
+            now = time.monotonic()
+            if index == total or index % 10 == 0 or now - last_update >= 2:
+                last_update = now
+                await self._progress(
+                    job, current=index, total=total, added=added, removed=removed,
+                    skipped=skipped, failed=failed
+                )
+
+        await self._complete(
+            job, "PARTIAL" if failed else "SUCCEEDED",
+            current=total, total=total, added=added, removed=removed,
+            skipped=skipped, failed=failed
+        )
 
     async def _run_scan(self, guild: discord.Guild, job: dict) -> None:
         # Reuse the existing parsers; never invent a separate recovery grammar.

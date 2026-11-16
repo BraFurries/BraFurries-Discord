@@ -20,6 +20,7 @@ from core.theme_runtime import ThemeRuntime
 from core.guild_management import apply_guild_operation, build_guild_resources, build_structure_preview, can_manage_guild
 from core.bulk_role_assignment import BulkRolePreviewError, build_bulk_role_preview
 from core.role_tool_runtime import RoleToolRuntime, RoleToolRuntimeError
+from core.role_migration import build_role_migration_preview
 from core.channel_permission_copy import (
     ChannelPermissionConflict, validate_channel_permission_copy,
     build_channel_permission_copy_preview, apply_channel_permission_copy,
@@ -429,6 +430,39 @@ class BotStatusApi:
             return web.json_response({'error': exc.code}, status=status)
         except (ValueError, KeyError, TypeError):
             return web.json_response({'error': 'invalid_role_preview_request'}, status=422)
+        return web.json_response(preview)
+
+    async def _handle_role_migration_preview(self, request: web.Request) -> web.Response:
+        # Read-only preview with the same internal auth and fail-closed member
+        # cache completeness checks used by bulk assignment.
+        if not self.token:
+            return web.json_response({'error': 'operation_auth_not_configured'}, status=503)
+        guild, error = self._authorized_guild(request)
+        if error is not None:
+            return error
+        try:
+            actor_id = int(request.match_info['discord_user_id'])
+            source_id = int(request.match_info['source_role_id'])
+            target_id = int(request.match_info['target_role_id'])
+            if min(actor_id, source_id, target_id) <= 0:
+                raise ValueError('invalid_identifier')
+            try:
+                preview = build_role_migration_preview(guild, actor_id, source_id, target_id)
+            except BulkRolePreviewError as exc:
+                if exc.code != 'member_cache_incomplete':
+                    raise
+                try:
+                    await asyncio.wait_for(guild.chunk(cache=True), timeout=20)
+                except (asyncio.TimeoutError, discord.ClientException, discord.HTTPException):
+                    return web.json_response({'error': 'member_cache_unavailable'}, status=503)
+                preview = build_role_migration_preview(guild, actor_id, source_id, target_id)
+        except PermissionError as exc:
+            return web.json_response({'error': str(exc)}, status=403)
+        except BulkRolePreviewError as exc:
+            return web.json_response({'error': exc.code},
+                                     status=503 if exc.code == 'member_cache_incomplete' else 422)
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({'error': 'invalid_role_migration_request'}, status=422)
         return web.json_response(preview)
 
     async def _handle_structure_preview(self, request: web.Request) -> web.Response:
@@ -1386,6 +1420,7 @@ class BotStatusApi:
         app.router.add_get('/guilds/{guild_id}/members/{discord_user_id}', self._handle_member_state)
         app.router.add_get('/guilds/{guild_id}/resources/{discord_user_id}', self._handle_guild_resources)
         app.router.add_get('/guilds/{guild_id}/roles/{role_id}/bulk-preview/{discord_user_id}', self._handle_bulk_role_preview)
+        app.router.add_get('/guilds/{guild_id}/roles/migration-preview/{source_role_id}/{target_role_id}/{discord_user_id}', self._handle_role_migration_preview)
         app.router.add_get('/guilds/{guild_id}/role-tools/access/{discord_user_id}', self._handle_role_tool_access)
         app.router.add_post('/guilds/{guild_id}/role-tools/{operation_id}/dispatch/{discord_user_id}', self._handle_role_tool_dispatch)
         app.router.add_post('/guilds/{guild_id}/structure-preview/{discord_user_id}', self._handle_structure_preview)
