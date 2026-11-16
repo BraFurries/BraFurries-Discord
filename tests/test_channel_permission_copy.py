@@ -12,6 +12,11 @@ from core.channel_permission_copy import (
 )
 
 
+class Principal:
+    def __init__(self, principal_id, name):
+        self.id, self.name = principal_id, name
+
+
 class Overwrite:
     def __init__(self, allow, deny):
         self.allow, self.deny = allow, deny
@@ -39,8 +44,8 @@ class Guild:
         perms = SimpleNamespace(manage_guild=True, manage_channels=True, administrator=False)
         self.members = {1: SimpleNamespace(guild_permissions=perms)}
         self.me = SimpleNamespace(guild_permissions=perms)
-        principal = SimpleNamespace(id=23, name="staff")
-        # Namespace hashes by identity and can act as overwrite map keys.
+        principal = Principal(23, "staff")
+        # Discord overwrite principals (roles/members) are hashable objects.
         self.source = Channel(self, 100, {principal: Overwrite(1024, 0)})
         self.target = Channel(self, 200, {})
         self.channels = {100: self.source, 200: self.target}
