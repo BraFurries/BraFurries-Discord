@@ -6,6 +6,7 @@ from discord import app_commands
 from datetime import datetime, timedelta
 import json
 import logging
+import time
 from core.time_functions import now
 from core.database import (
     updateVoiceRecord,
@@ -13,7 +14,6 @@ from core.database import (
     updateGameRecord,
     getAllGameRecords,
     getBlacklistedGames,
-    addGameToBlacklist,
     getLogConfig,
     upsertActiveCallLog,
     getActiveCallLogs,
@@ -30,32 +30,51 @@ class RecordsCog(commands.Cog):
         self.call_log_messages: dict[int, int] = {}
         self.voice_session_starts: dict[tuple[int, int], datetime] = {}
         self.game_sessions: dict[tuple[int, int], tuple[datetime, str]] = {}
-        self.blacklisted_games_by_guild: dict[int, set[str]] = {}
-        self._blacklist_loads: dict[int, asyncio.Task[set[str]]] = {}
+        # One platform-wide policy, shared by every guild. Coalesce concurrent
+        # refreshes so presence events don't multiply identical database reads.
+        self.blacklisted_games_global: set[str] | None = None
+        self._blacklist_refreshed_at = 0.0
+        self._blacklist_ttl_seconds = 10.0
+        self._blacklist_load: asyncio.Task[set[str]] | None = None
         super().__init__()
         self.save_records.start()
 
     async def _get_blacklisted_games(self, guild_id: int) -> set[str]:
-        cached = self.blacklisted_games_by_guild.get(guild_id)
-        if cached is not None:
+        cached = self.blacklisted_games_global
+        if cached is not None and (
+            time.monotonic() - self._blacklist_refreshed_at
+            < self._blacklist_ttl_seconds
+        ):
             return cached
 
-        existing_load = self._blacklist_loads.get(guild_id)
-        if existing_load is None:
+        task = self._blacklist_load
+        if task is None:
             async def _load_games() -> set[str]:
+                # guild_id remains only for the legacy database function signature.
                 games = await asyncio.to_thread(getBlacklistedGames, guild_id)
-                return set(games)
+                return {name.casefold() for name in games}
 
-            existing_load = asyncio.create_task(_load_games())
-            self._blacklist_loads[guild_id] = existing_load
+            task = asyncio.create_task(_load_games())
+            self._blacklist_load = task
 
         try:
-            loaded_games = await asyncio.shield(existing_load)
-        finally:
-            self._blacklist_loads.pop(guild_id, None)
+            loaded_games = await asyncio.shield(task)
+        except BaseException:
+            if task.done() and self._blacklist_load is task:
+                self._blacklist_load = None
+            raise
 
-        self.blacklisted_games_by_guild[guild_id] = loaded_games
-        return loaded_games
+        if self._blacklist_load is task:
+            self._blacklist_load = None
+            # A newly blocked game must not resume counting an old session if
+            # administrators later remove it from the blacklist.
+            for session_key, (_, game_name) in list(self.game_sessions.items()):
+                if game_name.casefold() in loaded_games:
+                    self.game_sessions.pop(session_key, None)
+            self.blacklisted_games_global = loaded_games
+            self._blacklist_refreshed_at = time.monotonic()
+
+        return self.blacklisted_games_global
 
     def _open_voice_interval(self, channel_id: int, user_id: int, started_at: datetime):
         channel_logs = self.call_logs.setdefault(channel_id, {})
@@ -439,20 +458,6 @@ class RecordsCog(commands.Cog):
 
             await ctx.followup.send(content='# Recordes do servidor', embeds=embeds)
 
-    @app_commands.command(name='recorde_adicionar_blacklist', description='Adiciona um jogo à blacklist de recordes')
-    async def addRecordBlacklist(self, ctx: discord.Interaction, *, jogo: str):
-        await ctx.response.defer()
-        if addGameToBlacklist(ctx.guild.id, jogo):
-            (await self._get_blacklisted_games(ctx.guild.id)).add(jogo)
-            # remove any ongoing sessions for this game
-            for session_key, (start, game_name) in list(self.game_sessions.items()):
-                guild_id, _ = session_key
-                if guild_id == ctx.guild.id and game_name == jogo:
-                    self.game_sessions.pop(session_key, None)
-            await ctx.followup.send(content=f'Jogo "{jogo}" adicionado à blacklist!')
-        else:
-            await ctx.followup.send(content='Não foi possível adicionar o jogo à blacklist.', ephemeral=True)
-
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         if member.bot:
@@ -470,7 +475,7 @@ class RecordsCog(commands.Cog):
             self._open_voice_interval(after.channel.id, member.id, current_time)
             self.voice_session_starts.setdefault(member_key, current_time)
             game_name = next((a.name for a in member.activities if a.type == discord.ActivityType.playing), None)
-            if game_name and game_name not in guild_blacklist:
+            if game_name and game_name.casefold() not in guild_blacklist:
                 self.game_sessions[member_key] = (current_time, game_name)
             await self._refresh_call_log(member.guild, after.channel.id)
         # Member left voice channel
@@ -513,9 +518,9 @@ class RecordsCog(commands.Cog):
             return
 
         guild_blacklist = await self._get_blacklisted_games(after.guild.id)
-        if before_game in guild_blacklist:
+        if before_game and before_game.casefold() in guild_blacklist:
             before_game = None
-        if after_game in guild_blacklist:
+        if after_game and after_game.casefold() in guild_blacklist:
             after_game = None
         in_voice = after.voice and after.voice.channel is not None
         member_key = (after.guild.id, after.id)
@@ -553,7 +558,7 @@ class RecordsCog(commands.Cog):
             member = guild.get_member(user_id)
             if member is None or member.bot:
                 continue
-            if game_name in await self._get_blacklisted_games(guild_id):
+            if game_name.casefold() in await self._get_blacklisted_games(guild_id):
                 continue
             seconds = int((now() - start).total_seconds())
             if seconds > 0:
