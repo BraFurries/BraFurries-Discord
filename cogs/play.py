@@ -999,14 +999,23 @@ class PlayCog(commands.Cog):
             return False
 
     async def _run_ritual(self, guild_id: int):
+        ticks = 0
         while True:
-            await asyncio.sleep(20)
+            await asyncio.sleep(5)
+            ticks += 1
             state = self.ritual_states.get(guild_id)
             if not state or not state.get("active"):
                 return
             now = int(time.time())
             if now >= state["ends_at"] or state["energy"] >= 100:
                 break
+            # Refresh the countdown/cooldowns every 5s; gameplay events stay on 20s ticks.
+            if ticks % 4:
+                if state.get("message"):
+                    updated = await self._safe_update_ritual_message(guild_id)
+                    if not updated:
+                        return
+                continue
             state["instability"] = min(100, state["instability"] + 4)
             now = int(time.time())
             state["effects"] = {k:v for k,v in state.get("effects", {}).items() if v > now}
