@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 import random
 from core.runtime_config import env_flag_enabled
 from core.command_analytics import record_completion as record_command_completion
+from core.command_error_alerts import format_command_error_alert
 from core.community_lifecycle_api import (
     CommunityLifecycleApiClient,
     CommunityLifecycleApiError,
@@ -766,16 +767,7 @@ async def on_app_command_error(ctx, error):
             return None
 
     async def _notify_admin(error_message: str):
-        channel_name = getattr(ctx.channel, 'name', str(ctx.channel))
-        user_name = getattr(ctx.user, 'display_name', str(ctx.user))
-        command_name = getattr(getattr(ctx, 'command', None), 'name', 'desconhecido')
-        text = (
-            'Coddy apresentou um erro: \n'
-            f'**Canal**: {channel_name} \n'
-            f'**Usuário**: {user_name} \n'
-            f'**Comando**: {command_name} \n'
-            f'**Erro**:{error_message}'
-        )
+        text = format_command_error_alert(ctx, error_message)
 
         telegram_token = os.getenv('TELEGRAM_TOKEN')
         telegram_admin = os.getenv('TELEGRAM_ADMIN')
