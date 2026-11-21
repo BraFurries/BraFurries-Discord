@@ -4778,6 +4778,8 @@ def getAllEvents():
 
 
 def getEventsByState(locale_id: int):
+    if locale_id is None:
+        return []
     with pooled_connection() as cursor:
         return list_upcoming_events(cursor, locale_id=locale_id)
 
