@@ -29,6 +29,7 @@ import unicodedata
 from cryptography.fernet import Fernet, InvalidToken
 import asyncio
 import aiomysql
+from core.event_queries import list_upcoming_events, fetch_event_by_name, list_events_by_owner
 from core.runtime_config import (
     get_database_name,
 )
@@ -4773,150 +4774,25 @@ def getAltAccounts(member: discord.Member | discord.User) -> list[int]:
 
 def getAllEvents():
     with pooled_connection() as cursor:
-        query = f"""
-        SELECT  events.id, 
-                events.event_name, 
-                events.address, 
-                events.point_name, 
-                events.price, 
-                events.max_price, 
-                events.starting_datetime, 
-                events.ending_datetime, 
-                events.description, 
-                events.group_chat_link, 
-                users.username, 
-                locale.locale_name AS state, 
-                locale.locale_abbrev AS state_abbrev, 
-                events.city, 
-                events.website, 
-                events.out_of_tickets, 
-                events.sales_ended
-        FROM events
-        JOIN users ON events.host_user_id = users.id
-        JOIN locale ON events.locale_id = locale.id
-        WHERE events.approved = 1"""
-        cursor.execute(query)
-        events = cursor.fetchall()
-        for e in events:
-            e['starting_datetime'] = datetime.strptime(f"{e['starting_datetime']}", '%Y-%m-%d %H:%M:%S')
-            e['ending_datetime'] = datetime.strptime(f"{e['ending_datetime']}", '%Y-%m-%d %H:%M:%S')
-            if e['website'] != None and not e['website'].__contains__('http'):
-                e['website'] = f'https://{e["website"]}'
-            if e['group_chat_link'] != None and not e['group_chat_link'].__contains__('http'):
-                e['group_chat_link'] = f'https://{e["group_chat_link"]}'
-        events = [e for e in events if e['ending_datetime'] >= datetime.now()]
-        return events
+        return list_upcoming_events(cursor)
 
-def getEventsByState(locale_id:int):
-    with pooled_connection() as cursor:
-        query = f"""
-        SELECT  events.id, 
-                events.event_name, 
-                events.address, 
-                events.point_name, 
-                events.price, 
-                events.max_price, 
-                events.starting_datetime, 
-                events.ending_datetime, 
-                events.description, 
-                events.group_chat_link, 
-                users.username, 
-                locale.locale_name AS state, 
-                locale.locale_abbrev AS state_abbrev, 
-                events.city, 
-                events.website, 
-                events.out_of_tickets, 
-                events.sales_ended
-        FROM events
-        JOIN users ON events.host_user_id = users.id
-        JOIN locale ON events.locale_id = locale.id
-        WHERE events.locale_id = '{locale_id}'
-        AND events.approved = 1;"""
-        cursor.execute(query)
-        events = cursor.fetchall()
-        for e in events:
-            e['starting_datetime'] = datetime.strptime(f"{e['starting_datetime']}", '%Y-%m-%d %H:%M:%S')
-            e['ending_datetime'] = datetime.strptime(f"{e['ending_datetime']}", '%Y-%m-%d %H:%M:%S')
-            if e['website'] != None and not e['website'].__contains__('http'):
-                e['website'] = f'https://{e["website"]}'
-            if e['group_chat_link'] != None and not e['group_chat_link'].__contains__('http'):
-                e['group_chat_link'] = f'https://{e["group_chat_link"]}'
-        events = [e for e in events if e['ending_datetime'] >= datetime.now()]
-        return events
 
-def getEventByName(event_name:str):
+def getEventsByState(locale_id: int):
+    if locale_id is None:
+        return []
     with pooled_connection() as cursor:
-        query = f"""
-        SELECT  events.id, 
-                events.event_name, 
-                events.address, 
-                events.point_name, 
-                events.price, 
-                events.max_price, 
-                events.starting_datetime, 
-                events.ending_datetime, 
-                events.description, 
-                events.group_chat_link, 
-                users.username, 
-                locale.locale_name AS state, 
-                locale.locale_abbrev AS state_abbrev, 
-                events.city, 
-                events.website, 
-                events.event_logo_url, 
-                events.max_price, 
-                events.out_of_tickets, 
-                events.sales_ended
-        FROM events
-        JOIN users ON events.host_user_id = users.id
-        JOIN locale ON events.locale_id = locale.id"""
-        cursor.execute(query + f""" WHERE events.event_name = '{event_name}' AND events.approved = 1;""")
-        events = cursor.fetchall()
-        if events == []:
-            cursor.execute(query + f""" WHERE events.event_name LIKE '%{event_name}%' AND events.approved = 1;""")
-            events = cursor.fetchall()
-        for e in events:
-            e['starting_datetime'] = datetime.strptime(f"{e['starting_datetime']}", '%Y-%m-%d %H:%M:%S')
-            e['ending_datetime'] = datetime.strptime(f"{e['ending_datetime']}", '%Y-%m-%d %H:%M:%S')
-            if e['website'] != None and not e['website'].__contains__('http'):
-                e['website'] = f'https://{e["website"]}'
-            if e['group_chat_link'] != None and not e['group_chat_link'].__contains__('http'):
-                e['group_chat_link'] = f'https://{e["group_chat_link"]}'
-        return events[0] if events != [] else None 
-    
-def getEventsByOwner(owner_name:str):
+        return list_upcoming_events(cursor, locale_id=locale_id)
+
+
+def getEventByName(event_name: str):
     with pooled_connection() as cursor:
-        query = f"""
-        SELECT  events.id, 
-                events.event_name, 
-                events.address, 
-                events.point_name, 
-                events.price, 
-                events.max_price, 
-                events.starting_datetime, 
-                events.ending_datetime, 
-                events.description, 
-                events.group_chat_link, 
-                users.username, 
-                locale.locale_name AS state, 
-                locale.locale_abbrev AS state_abbrev, 
-                events.city, 
-                events.website, 
-                events.out_of_tickets, 
-                events.sales_ended
-        FROM events
-        JOIN users ON events.host_user_id = users.id
-        JOIN locale ON events.locale_id = locale.id
-        WHERE users.username = '{owner_name}';"""
-        cursor.execute(query)
-        eventos = cursor.fetchall()
-        for e in eventos:
-            e['starting_datetime'] = datetime.strptime(f"{e['starting_datetime']}", '%Y-%m-%d %H:%M:%S')
-            e['ending_datetime'] = datetime.strptime(f"{e['ending_datetime']}", '%Y-%m-%d %H:%M:%S')
-            if e['website'] != None and not e['website'].__contains__('http'):
-                e['website'] = f'https://{e["website"]}'
-            if e['group_chat_link'] != None and not e['group_chat_link'].__contains__('http'):
-                e['group_chat_link'] = f'https://{e["group_chat_link"]}'
-        return eventos
+        return fetch_event_by_name(cursor, event_name)
+
+
+def getEventsByOwner(owner_name: str):
+    with pooled_connection() as cursor:
+        return list_events_by_owner(cursor, owner_name)
+
 
 def admConnectTelegramAccount(guild_id: int, discord_user:discord.Member, user_telegram:str):
     with pooled_connection() as cursor:
